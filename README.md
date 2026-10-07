@@ -1,36 +1,43 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Energy Tracker
 
-## Getting Started
+Tracks electricity use from TOMZN TOVA 63T breakers through Tuya Cloud, works out monthly bills on
+Bangladesh slab tariffs, and shows how much the solar inverter saves. Read-only towards the devices.
 
-First, run the development server:
+Design decisions and the data model are in [PLAN.md](PLAN.md). Server setup is in [DEPLOY.md](DEPLOY.md).
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Local development
+
+Needs Node 22+ and PostgreSQL 14+.
+
+```sh
+cp .env.example .env     # fill in DATABASE_URL, BETTER_AUTH_SECRET, Tuya keys, SEED_ADMIN_*
+npm install
+npm run db:migrate
+npm run seed:admin       # first super admin from SEED_ADMIN_*
+npm run seed:tariffs     # BERC LT-A residential rates (June 2026)
+npm run dev              # http://localhost:3000
+npm run poller           # in a second terminal: reads the breakers every minute
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`npm run poller -- --once` runs a single poll and exits, which is handy for testing.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Scripts
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Script | What it does |
+|---|---|
+| `dev` / `build` / `start` | Next.js |
+| `poller` | Polls Tuya every `POLL_INTERVAL_SECONDS`; hourly stores finished bills and prunes old readings |
+| `db:generate` / `db:migrate` / `db:studio` | Drizzle schema migrations |
+| `seed:admin` / `seed:tariffs` | First super admin, default tariff (both safe to re-run) |
+| `typecheck` / `lint` | Checks |
 
-## Learn More
+## Where things live
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Path | |
+|---|---|
+| `src/lib/tuya/` | Tuya Cloud client (signing, token, batch status) and data-point decoding |
+| `src/lib/energy.ts` | Counter deltas, reset handling, Dhaka day boundaries |
+| `src/lib/poll.ts` | One poll cycle; `scripts/poller.ts` runs it on a timer |
+| `src/lib/billing.ts` | Slab/lifeline bill maths, next price step, billing cycles (pure) |
+| `src/lib/billing-data.ts` | Meter bills, solar savings, projections, finalising past cycles |
+| `src/app/(app)/` | Pages: dashboard, bills, meters, devices, tariffs, admin |
