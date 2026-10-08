@@ -1,19 +1,9 @@
 import Link from "next/link";
-import { formatDistanceToNow } from "date-fns";
 import { requireUser, accessibleProfiles } from "@/lib/session";
-import { profileDashboard, type MeterDashboard } from "@/lib/dashboard-data";
-import { kwh, tk, watts } from "@/lib/format";
+import { buildView, meterLabel, profileDashboard } from "@/lib/dashboard-data";
 import { AutoRefresh } from "@/components/auto-refresh";
-import { EnergyBarChart, PowerLineChart } from "@/components/charts";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-
-const dayLabel = (d: string) =>
-  new Date(`${d}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
-const monthLabel = (m: string) =>
-  new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-GB", { month: "short", year: "2-digit", timeZone: "UTC" });
+import { SegmentedTabs } from "@/components/segmented-tabs";
+import { DashboardView, Panel } from "@/components/dashboard/dashboard-view";
 
 // Per-user data from the database on every request (see the (app) layout).
 export const instant = false;
@@ -21,205 +11,93 @@ export const instant = false;
 export default async function DashboardPage() {
   const user = await requireUser();
   const profiles = await accessibleProfiles(user);
-  const dashboards = await Promise.all(profiles.map(async (p) => ({ profile: p, meters: await profileDashboard(p.id) })));
+  const meters = (await Promise.all(profiles.map((p) => profileDashboard(p.id)))).flat();
 
-  return (
-    <div className="grid gap-8">
-      <AutoRefresh seconds={60} />
-      <div>
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
-        <p className="text-sm text-muted-foreground">Updates every minute.</p>
-      </div>
-
-      {profiles.length === 0 && (
+  if (profiles.length === 0) {
+    return (
+      <Panel>
         <p className="text-sm text-muted-foreground">You are not a member of any profile yet. Ask the super admin to add you.</p>
-      )}
+      </Panel>
+    );
+  }
+  if (meters.length === 0 || meters.every((m) => m.devices.length === 0)) {
+    return <GettingStarted hasMeter={meters.length > 0} />;
+  }
 
-      {dashboards.map(({ profile, meters }) => (
-        <section key={profile.id} className="grid gap-6">
-          {profiles.length > 1 && <h2 className="text-lg font-semibold">{profile.name}</h2>}
-          {meters.length === 0 ? (
-            <Card>
-              <CardContent className="text-sm text-muted-foreground">
-                No meters yet.{" "}
-                <Link href="/meters" className="underline">
-                  Add a meter
-                </Link>
-                , then{" "}
-                <Link href="/devices" className="underline">
-                  add its breakers
-                </Link>
-                .
-              </CardContent>
-            </Card>
-          ) : (
-            meters.map((m) => <MeterSection key={m.meter.id} data={m} />)
-          )}
+  const overview = buildView("all", meters.length > 1 ? "All meters" : meterLabel(meters[0].meter), meters);
+  const perMeter = meters.map((m) => buildView(m.meter.id, meterLabel(m.meter), [m]));
+
+  return (
+    <div className="grid gap-10">
+      <AutoRefresh seconds={60} />
+
+      <section className="grid gap-5">
+        <div className="rise flex flex-wrap items-baseline justify-between gap-2">
+          <h1 className="text-[1.75rem] leading-tight font-semibold tracking-[-0.025em]">{overview.title}</h1>
+          <span className="text-sm text-muted-foreground">
+            {meters.length > 1 ? `${meters.length} meters combined` : profiles.length > 1 ? "" : profiles[0].name}
+          </span>
+        </div>
+        <DashboardView view={overview} />
+      </section>
+
+      {perMeter.length > 1 && (
+        <section className="grid gap-5">
+          <div className="grid gap-1">
+            <h2 className="text-xl font-semibold tracking-[-0.02em]">By meter</h2>
+            <p className="text-sm text-muted-foreground">The same numbers for each meter on its own.</p>
+          </div>
+          <SegmentedTabs
+            label="Meter"
+            tabs={perMeter.map((v) => ({ key: v.key, label: v.title }))}
+            panels={perMeter.map((v) => (
+              <DashboardView key={v.key} view={v} />
+            ))}
+          />
         </section>
-      ))}
+      )}
     </div>
   );
 }
 
-function MeterSection({ data }: { data: MeterDashboard }) {
-  const { meter, cycle, nextStep } = data;
-  const hasSolar = data.devices.some((d) => d.source === "solar");
-  const remainingKwh = cycle ? Math.max(cycle.projectedKwh - cycle.kwh, 0) : 0;
-  const stepSoon = nextStep && cycle && nextStep.unitsLeft < remainingKwh;
-
+/** First run: a real sequence, so numbered steps earn their place here. */
+function GettingStarted({ hasMeter }: { hasMeter: boolean }) {
+  const steps = [
+    { title: "Add your meter", body: "Meter number, tariff, sanctioned load and meter rent from your electricity bill.", href: "/meters", done: hasMeter },
+    { title: "Add your breakers", body: "Pick each 63T breaker from your Tuya account and put it under its meter. Mark the solar one.", href: "/devices", done: false },
+    { title: "Watch it fill in", body: "Readings arrive every minute. Bills and the price steps appear as the cycle goes on.", href: null, done: false },
+  ];
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2">
-          {meter.label ?? `Meter ${meter.meterNo}`}
-          {meter.utility && <Badge variant="outline">{meter.utility}</Badge>}
-        </CardTitle>
-        <CardDescription>
-          Meter {meter.meterNo}
-          {cycle && ` · cycle ${cycle.cycle.start} to ${cycle.cycle.end}, day ${Math.ceil(cycle.daysElapsed)} of ${cycle.daysInCycle}`}
-          {cycle?.partialFrom && ` · tracking started ${cycle.partialFrom}, so this cycle's figures are partial`}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-6">
-        {data.devices.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No breakers on this meter yet.{" "}
-            <Link href="/devices" className="underline">
-              Add one
-            </Link>
-            .
-          </p>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <Stat label="Using now" value={data.liveGridW === null ? "—" : watts(data.liveGridW)} hint={data.liveGridW === null ? "No live reading" : "From the grid"} />
-              <Stat label="Today" value={kwh(data.todayGridKwh)} hint={cycle ? `≈ ${tk(estimateCost(data.todayGridKwh, cycle))} energy charge` : undefined} />
-              <Stat label="This cycle so far" value={cycle ? kwh(cycle.kwh) : "—"} hint={cycle ? `${tk(cycle.bill.total)} incl. charges` : "No tariff rates"} />
-              <Stat
-                label="Projected bill"
-                value={cycle ? tk(cycle.projected.total) : "—"}
-                hint={cycle ? `≈ ${kwh(Math.round(cycle.projectedKwh))} by ${cycle.cycle.end}` : undefined}
-                emphasis
-              />
-              {hasSolar && (
-                <>
-                  <Stat label="Solar now" value={data.liveSolarW === null ? "—" : watts(data.liveSolarW)} hint="Inverter output" />
-                  <Stat label="Solar today" value={kwh(data.todaySolarKwh)} />
-                  <Stat label="Solar this cycle" value={cycle?.solar ? kwh(cycle.solar.outputKwh) : "—"} />
-                  <Stat label="Saved by solar" value={cycle?.solar ? tk(cycle.solar.saving) : "—"} hint="This cycle so far" emphasis />
-                </>
-              )}
-            </div>
-
-            {nextStep && cycle && (
-              <Alert variant={stepSoon ? "destructive" : "default"}>
-                <AlertTitle>
-                  {cycle.bill.lifeline
-                    ? `${kwh(Math.max(nextStep.unitsLeft, 0))} left on the lifeline rate`
-                    : `${kwh(Math.max(nextStep.unitsLeft, 0))} until the next slab`}
-                </AlertTitle>
-                <AlertDescription>
-                  {cycle.bill.lifeline
-                    ? `Going over ends the lifeline rate of ${tk(nextStep.currentRate)}/kWh — every unit this cycle would then be billed on the slabs.`
-                    : `Units now cost ${tk(nextStep.currentRate)}/kWh; after that they cost ${tk(nextStep.nextRate)}/kWh.`}
-                  {stepSoon && " At the current pace you will cross it before the cycle ends."}
-                </AlertDescription>
-              </Alert>
-            )}
-
-            <ChartBlock title="Power today">
-              {data.power.length ? (
-                <PowerLineChart points={data.power} showSolar={hasSolar} />
-              ) : (
-                <p className="text-sm text-muted-foreground">No readings yet today. Is the poller running?</p>
-              )}
-            </ChartBlock>
-
-            <div className="grid gap-6 lg:grid-cols-2">
-              <ChartBlock title="Last 30 days">
-                <EnergyBarChart points={data.daily.map((d) => ({ label: dayLabel(d.day), grid: d.grid, solar: d.solar }))} showSolar={hasSolar} />
-              </ChartBlock>
-              <ChartBlock title="Last 12 months">
-                <EnergyBarChart points={data.monthly.map((d) => ({ label: monthLabel(d.month), grid: d.grid, solar: d.solar }))} showSolar={hasSolar} />
-              </ChartBlock>
-            </div>
-
-            <DeviceTable devices={data.devices} />
-          </>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-/** Rough Tk value of some kWh at the cycle's average energy rate so far. */
-function estimateCost(units: number, cycle: NonNullable<MeterDashboard["cycle"]>) {
-  const rate = cycle.projected.kwh > 0 ? cycle.projected.energyCharge / cycle.projected.kwh : 0;
-  return units * rate;
-}
-
-function Stat({ label, value, hint, emphasis }: { label: string; value: string; hint?: string; emphasis?: boolean }) {
-  return (
-    <div className="rounded-lg border bg-background p-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={`mt-1 tabular-nums ${emphasis ? "text-2xl font-semibold" : "text-xl font-medium"}`}>{value}</div>
-      {hint && <div className="mt-0.5 text-xs text-muted-foreground">{hint}</div>}
-    </div>
-  );
-}
-
-function ChartBlock({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="grid gap-2">
-      <h3 className="text-sm font-medium">{title}</h3>
-      {children}
-    </div>
-  );
-}
-
-function DeviceTable({ devices }: { devices: MeterDashboard["devices"] }) {
-  return (
-    <div className="grid gap-2">
-      <h3 className="text-sm font-medium">Breakers</h3>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead className="text-right">Power</TableHead>
-            <TableHead className="text-right">Voltage</TableHead>
-            <TableHead className="text-right">Current</TableHead>
-            <TableHead className="text-right">Leakage</TableHead>
-            <TableHead className="text-right">Today</TableHead>
-            <TableHead>Status</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {devices.map((d) => (
-            <TableRow key={d.id}>
-              <TableCell className="font-medium">
-                {d.name} {d.source === "solar" && <Badge variant="outline">Solar</Badge>}
-              </TableCell>
-              <TableCell className="text-right tabular-nums">{d.live?.powerW != null ? watts(d.live.powerW) : "—"}</TableCell>
-              <TableCell className="text-right tabular-nums">{d.live?.voltageV != null ? `${d.live.voltageV.toFixed(1)} V` : "—"}</TableCell>
-              <TableCell className="text-right tabular-nums">{d.live?.currentA != null ? `${d.live.currentA.toFixed(2)} A` : "—"}</TableCell>
-              <TableCell className="text-right tabular-nums">{d.live?.leakageMa != null ? `${d.live.leakageMa} mA` : "—"}</TableCell>
-              <TableCell className="text-right tabular-nums">{kwh(d.todayKwh)}</TableCell>
-              <TableCell>
-                {!d.active ? (
-                  <Badge variant="outline">Paused</Badge>
-                ) : d.live ? (
-                  <Badge variant="secondary">Live</Badge>
-                ) : (
-                  <span className="text-xs text-muted-foreground">
-                    {d.online === false ? "Offline" : "No data"}
-                    {d.lastSeenAt && ` · ${formatDistanceToNow(d.lastSeenAt, { addSuffix: true })}`}
-                  </span>
+    <div className="mx-auto grid max-w-2xl gap-6 pt-6">
+      <div className="rise grid gap-2">
+        <h1 className="text-[1.75rem] leading-tight font-semibold tracking-[-0.025em]">Let&apos;s get your home connected</h1>
+        <p className="text-muted-foreground">Three steps, a few minutes. After that this page shows live power, the projected bill and solar savings.</p>
+      </div>
+      <ol className="grid gap-3">
+        {steps.map((s, i) => (
+          <li key={s.title} className="rise" style={{ "--i": i + 1 } as React.CSSProperties}>
+            <div className="flex gap-4 rounded-2xl bg-card p-5 ring-1 ring-foreground/[0.07]">
+              <span
+                className={
+                  "grid size-8 shrink-0 place-items-center rounded-full text-sm font-semibold " +
+                  (s.done ? "bg-grid text-white" : "bg-foreground/[0.07] text-foreground")
+                }
+              >
+                {s.done ? "✓" : i + 1}
+              </span>
+              <div className="grid gap-1">
+                <div className="font-medium">{s.title}</div>
+                <p className="text-sm text-muted-foreground">{s.body}</p>
+                {s.href && !s.done && (
+                  <Link href={s.href} className="mt-1 w-fit text-sm font-medium text-grid underline-offset-4 hover:underline">
+                    {s.title} →
+                  </Link>
                 )}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

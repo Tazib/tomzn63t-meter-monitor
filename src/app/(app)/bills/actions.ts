@@ -35,7 +35,7 @@ export async function recalculateBill(_: ActionResult | null, formData: FormData
         tariffVersionId: result.tariffVersionId,
         kwh: result.kwh.toFixed(3),
         total: result.bill.total.toFixed(2),
-        breakdown: { ...result.bill, partialFrom: result.partialFrom },
+        breakdown: { ...result.bill, partialFrom: result.partialFrom, adjustmentKwh: result.adjustmentKwh },
         solarKwh: result.solar?.outputKwh.toFixed(3) ?? null,
         solarSaving: result.solar?.saving.toFixed(2) ?? null,
         finalizedAt: new Date(),

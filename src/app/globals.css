@@ -19,6 +19,11 @@
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
   --color-chart-5: var(--chart-5);
+  --color-grid: var(--grid);
+  --color-solar: var(--solar);
+  --color-warning: var(--warning);
+  --color-warning-surface: var(--warning-surface);
+  --color-good: var(--good);
   --color-chart-4: var(--chart-4);
   --color-chart-3: var(--chart-3);
   --color-chart-2: var(--chart-2);
@@ -49,72 +54,87 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  /* Canvas is a faint cool neutral; surfaces are pure white so panels lift off it. */
+  --background: oklch(0.982 0.004 255);
+  --foreground: oklch(0.2 0.014 255);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.2 0.014 255);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --popover-foreground: oklch(0.2 0.014 255);
+  --primary: oklch(0.24 0.016 255);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.955 0.005 255);
+  --secondary-foreground: oklch(0.24 0.016 255);
+  --muted: oklch(0.955 0.005 255);
+  --muted-foreground: oklch(0.49 0.014 255);
+  --accent: oklch(0.955 0.005 255);
+  --accent-foreground: oklch(0.24 0.016 255);
+  --destructive: oklch(0.56 0.2 25);
+  --border: oklch(0.915 0.006 255);
+  --input: oklch(0.88 0.008 255);
+  --ring: oklch(0.58 0.16 254);
+  --radius: 0.875rem;
+
+  /* Energy identities (validated dataviz pair): grid = blue, solar = orange. */
+  --grid: #2a78d6;
+  --solar: #eb6834;
+  /* Status: reserved for "act now" moments, always paired with an icon + words. */
+  --warning: oklch(0.47 0.12 65);
+  --warning-surface: oklch(0.97 0.035 85);
+  --good: oklch(0.5 0.13 150);
+
+  --chart-1: var(--grid);
+  --chart-2: var(--solar);
+  --chart-3: oklch(0.6 0.12 180);
+  --chart-4: oklch(0.7 0.14 85);
+  --chart-5: oklch(0.55 0.15 300);
+  --sidebar: oklch(0.975 0.004 255);
+  --sidebar-foreground: oklch(0.2 0.014 255);
+  --sidebar-primary: oklch(0.24 0.016 255);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.955 0.005 255);
+  --sidebar-accent-foreground: oklch(0.24 0.016 255);
+  --sidebar-border: oklch(0.915 0.006 255);
+  --sidebar-ring: oklch(0.58 0.16 254);
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
+  --background: oklch(0.145 0.006 255);
+  --foreground: oklch(0.96 0.004 255);
+  --card: oklch(0.19 0.008 255);
+  --card-foreground: oklch(0.96 0.004 255);
+  --popover: oklch(0.21 0.009 255);
+  --popover-foreground: oklch(0.96 0.004 255);
+  --primary: oklch(0.95 0.004 255);
+  --primary-foreground: oklch(0.18 0.01 255);
+  --secondary: oklch(0.25 0.01 255);
+  --secondary-foreground: oklch(0.96 0.004 255);
+  --muted: oklch(0.25 0.01 255);
+  --muted-foreground: oklch(0.74 0.012 255);
+  --accent: oklch(0.25 0.01 255);
+  --accent-foreground: oklch(0.96 0.004 255);
+  --destructive: oklch(0.7 0.17 25);
+  --border: oklch(1 0 0 / 9%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --ring: oklch(0.63 0.16 254);
+
+  --grid: #3987e5;
+  --solar: #d95926;
+  --warning: oklch(0.84 0.13 85);
+  --warning-surface: oklch(0.3 0.05 75);
+  --good: oklch(0.75 0.14 150);
+
+  --sidebar: oklch(0.17 0.007 255);
+  --sidebar-foreground: oklch(0.96 0.004 255);
+  --sidebar-primary: oklch(0.95 0.004 255);
+  --sidebar-primary-foreground: oklch(0.18 0.01 255);
+  --sidebar-accent: oklch(0.25 0.01 255);
+  --sidebar-accent-foreground: oklch(0.96 0.004 255);
+  --sidebar-border: oklch(1 0 0 / 9%);
+  --sidebar-ring: oklch(0.63 0.16 254);
 }
 
 @layer base {
@@ -126,5 +146,149 @@
   }
   html {
     @apply font-sans;
+    font-feature-settings: "ss01", "cv11";
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+}
+
+/* Disclosures: a chevron that turns instead of the browser's triangle. */
+details > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+details > summary::-webkit-details-marker {
+  display: none;
+}
+details > summary::before {
+  content: "";
+  flex: none;
+  width: 0.4rem;
+  height: 0.4rem;
+  margin-inline: 0.15rem 0.1rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  opacity: 0.6;
+  transform: rotate(-45deg);
+  transition: transform 220ms var(--ease-out-expo);
+}
+details[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+/* ------------------------------------------------------------------ motion
+   Every animation conveys state: new content arriving, a live signal, a value changing.
+   Defaults are fully visible; animations only enhance them. */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+/* Content arriving after navigation. Stagger with style="--i: n". */
+.rise {
+  animation: rise 420ms var(--ease-out-expo) both;
+  animation-delay: calc(var(--i, 0) * 50ms);
+}
+
+@keyframes breathe {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  70%,
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+/* A live reading: solid dot with a slow halo. */
+.live-dot {
+  position: relative;
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: currentColor;
+}
+.live-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: currentColor;
+  animation: breathe 2.4s var(--ease-out-quart) infinite;
+}
+
+/* Bars that fill: grow from zero on first paint, then glide between values on refresh. */
+.fill-bar {
+  transform-origin: left center;
+  transition: transform 700ms var(--ease-out-expo);
+}
+@starting-style {
+  .fill-bar {
+    transform: scaleX(0);
+  }
+}
+
+/* A full-width layer shifted by translateX(n%) so a marker glides without animating layout. */
+.marker-glide {
+  transition: transform 700ms var(--ease-out-expo);
+}
+@starting-style {
+  .marker-glide {
+    transform: translateX(0);
+  }
+}
+
+/* Account menu: native popover pinned under the avatar, fades and settles in. */
+.account-popover {
+  position: fixed;
+  inset: auto;
+  top: 3.75rem;
+  right: max(1rem, calc((100vw - 72rem) / 2 + 1rem));
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 160ms var(--ease-out-quart),
+    transform 260ms var(--ease-out-expo),
+    overlay 260ms allow-discrete,
+    display 260ms allow-discrete;
+}
+.account-popover:not(:popover-open) {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+}
+@starting-style {
+  .account-popover:popover-open {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-popover {
+    transition: opacity 120ms linear;
+    transform: none !important;
+  }
+  .rise {
+    animation: none;
+  }
+  .live-dot::after {
+    animation: none;
+    opacity: 0;
+  }
+  .fill-bar,
+  .marker-glide,
+  details > summary::before {
+    transition: none;
   }
 }

@@ -2,7 +2,7 @@
 // No "server-only" so the poller can finalise bills too.
 import { and, asc, between, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { addDays, computeBill, cycleFor, daysBetween, type Bill, type Cycle, type MeterCharges, type Tariff } from "@/lib/billing";
+import { addDays, computeBill, cycleFor, daysBetween, daysLeft, marginalCost, type Bill, type Cycle, type MeterCharges, type Tariff } from "@/lib/billing";
 import { dhakaDay } from "@/lib/energy";
 
 export type Meter = typeof schema.meters.$inferSelect;
@@ -80,10 +80,25 @@ export type MeterBill = {
   solar: SolarResult | null;
   /** First day any of this meter's devices was tracked; set only when that is after the cycle start. */
   partialFrom: string | null;
+  /** When the meter's first device started being tracked. */
+  trackedSince: Date | null;
+  /** Units entered from the utility meter for this cycle (usage the breakers didn't see), or null. */
+  adjustmentKwh: number | null;
+  /** kWh recorded by the grid breakers alone. */
+  trackedKwh: number;
 };
 
 /** What a stored bill's breakdown JSON holds. */
-export type StoredBreakdown = Bill & { partialFrom?: string | null };
+export type StoredBreakdown = Bill & { partialFrom?: string | null; adjustmentKwh?: number | null };
+
+/** Units entered for a meter's cycle, or null when none were entered. */
+export async function adjustmentFor(meterId: string, cycleStart: string): Promise<number | null> {
+  const [row] = await db
+    .select({ kwh: schema.meterAdjustments.kwh })
+    .from(schema.meterAdjustments)
+    .where(and(eq(schema.meterAdjustments.meterId, meterId), eq(schema.meterAdjustments.cycleStart, cycleStart)));
+  return row ? Number(row.kwh) : null;
+}
 
 /**
  * Bill for one meter over a cycle.
@@ -104,7 +119,9 @@ export async function meterBill(meter: Meter, cycle: Cycle, endOverride?: string
   const usage = await deviceKwh([...grid.map((d) => d.id), ...solar.map((d) => d.id), ...inputIds], cycle.start, end);
   const sum = (ids: string[]) => ids.reduce((s, id) => s + (usage.get(id) ?? 0), 0);
 
-  const kwh = sum(grid.map((d) => d.id));
+  const trackedKwh = sum(grid.map((d) => d.id));
+  const adjustmentKwh = await adjustmentFor(meter.id, cycle.start);
+  const kwh = Math.max(trackedKwh + (adjustmentKwh ?? 0), 0);
   const charges = meterCharges(meter);
   const bill = computeBill(kwh, t.tariff, charges);
 
@@ -116,17 +133,42 @@ export async function meterBill(meter: Meter, cycle: Cycle, endOverride?: string
     solarResult = { outputKwh, inputKwh, billWithoutSolar, saving: Math.round((billWithoutSolar.total - bill.total) * 100) / 100 };
   }
 
-  const firstTracked = meterDevices.length
-    ? dhakaDay(new Date(Math.min(...meterDevices.map((d) => d.createdAt.getTime()))))
-    : null;
-  const partialFrom = firstTracked && firstTracked > cycle.start ? firstTracked : null;
+  const trackedSince = meterDevices.length ? new Date(Math.min(...meterDevices.map((d) => d.createdAt.getTime()))) : null;
+  const firstTracked = trackedSince ? dhakaDay(trackedSince) : null;
+  // Entered meter units fill the gap before tracking, so the cycle is complete.
+  const partialFrom = adjustmentKwh === null && firstTracked && firstTracked > cycle.start ? firstTracked : null;
 
-  return { cycle: { start: cycle.start, end }, kwh, bill, tariffVersionId: t.version.id, solar: solarResult, partialFrom };
+  return {
+    cycle: { start: cycle.start, end },
+    kwh,
+    bill,
+    tariffVersionId: t.version.id,
+    solar: solarResult,
+    partialFrom,
+    trackedSince,
+    adjustmentKwh,
+    trackedKwh,
+  };
 }
 
-export type Projection = MeterBill & { daysElapsed: number; daysInCycle: number; projectedKwh: number; projected: Bill };
+export type Projection = MeterBill & {
+  /** Calendar progress through the cycle (for "day 7 of 31"). */
+  daysElapsed: number;
+  daysInCycle: number;
+  /** Days the usage figure covers: the whole cycle so far with entered meter units, else since tracking began. */
+  trackedDays: number;
+  projectedKwh: number;
+  projected: Bill;
+  /** False until there's a full day of readings; the projection is a rough guess before that. */
+  projectionReliable: boolean;
+};
 
-/** Current cycle so far, plus a straight-line projection to the cycle end. */
+const DAY_MS = 86_400_000;
+
+/**
+ * Current cycle so far, plus a projection to the cycle end: usage so far plus the average rate
+ * since readings began (this cycle) applied to the time left.
+ */
 export async function currentCycleBill(meter: Meter, now = new Date()): Promise<Projection | null> {
   const today = dhakaDay(now);
   const cycle = cycleFor(today, meter.billingCycleDay);
@@ -135,18 +177,26 @@ export async function currentCycleBill(meter: Meter, now = new Date()): Promise<
 
   const t = (await tariffFor(meter.tariffPlanId, cycle.start))!;
   const daysInCycle = daysBetween(cycle.start, cycle.end);
-  // Count today as a partial day so early-morning projections aren't wildly high.
-  const hoursToday = (now.getTime() - Date.parse(`${today}T00:00:00+06:00`)) / 3_600_000;
-  const daysElapsed = Math.max(daysBetween(cycle.start, today) - 1 + hoursToday / 24, 0.25);
-  const projectedKwh = (soFar.kwh / daysElapsed) * daysInCycle;
+  const cycleStart = Date.parse(`${cycle.start}T00:00:00+06:00`);
+  const cycleEnd = Date.parse(`${cycle.end}T00:00:00+06:00`) + DAY_MS;
+  const daysElapsed = Math.max((now.getTime() - cycleStart) / DAY_MS, 0);
+
+  // With meter units entered, usage covers the whole cycle so far; otherwise only since tracking began.
+  const since = soFar.adjustmentKwh !== null ? cycleStart : Math.max(cycleStart, soFar.trackedSince?.getTime() ?? cycleStart);
+  const trackedDays = Math.max((now.getTime() - since) / DAY_MS, 0);
+  // At least six hours of data before extrapolating, so the first minutes don't explode the estimate.
+  const ratePerDay = soFar.kwh / Math.max(trackedDays, 0.25);
+  const projectedKwh = soFar.kwh + ratePerDay * Math.max((cycleEnd - now.getTime()) / DAY_MS, 0);
 
   return {
     ...soFar,
     cycle,
     daysElapsed,
     daysInCycle,
+    trackedDays,
     projectedKwh,
     projected: computeBill(projectedKwh, t.tariff, meterCharges(meter)),
+    projectionReliable: trackedDays >= 1,
   };
 }
 
@@ -181,7 +231,7 @@ export async function finalizeBills(now = new Date()): Promise<number> {
           tariffVersionId: result.tariffVersionId,
           kwh: result.kwh.toFixed(3),
           total: result.bill.total.toFixed(2),
-          breakdown: { ...result.bill, partialFrom: result.partialFrom } satisfies StoredBreakdown,
+          breakdown: { ...result.bill, partialFrom: result.partialFrom, adjustmentKwh: result.adjustmentKwh } satisfies StoredBreakdown,
           solarKwh: result.solar?.outputKwh.toFixed(3),
           solarSaving: result.solar?.saving.toFixed(2),
         })
@@ -199,4 +249,132 @@ async function hasUsage(meterId: string, cycle: Cycle) {
     .innerJoin(schema.devices, eq(schema.devices.id, schema.dailyEnergy.deviceId))
     .where(and(eq(schema.devices.meterId, meterId), between(schema.dailyEnergy.day, cycle.start, cycle.end)));
   return (row?.n ?? 0) > 0;
+}
+
+// ---------------------------------------------------------------- entered meter units
+
+/** kWh the meter's grid breakers recorded between two days (inclusive). */
+async function trackedGridKwh(meterId: string, start: string, end: string) {
+  const grid = await db
+    .select({ id: schema.devices.id })
+    .from(schema.devices)
+    .where(and(eq(schema.devices.meterId, meterId), eq(schema.devices.source, "grid")));
+  const usage = await deviceKwh(grid.map((d) => d.id), start, end);
+  return [...usage.values()].reduce((a, b) => a + b, 0);
+}
+
+/** The current cycle's usage as the utility meter would show it: breakers plus entered units. */
+export async function cycleUsageNow(meterId: string, cycleDay: number, now = new Date()) {
+  const today = dhakaDay(now);
+  const cycle = cycleFor(today, cycleDay);
+  const tracked = await trackedGridKwh(meterId, cycle.start, today);
+  const adjustment = await adjustmentFor(meterId, cycle.start);
+  return { cycle, tracked, adjustment, total: tracked + (adjustment ?? 0) };
+}
+
+/**
+ * Records "units used this cycle so far" read off the utility meter. Stores the part the breakers
+ * haven't recorded, so later breaker readings add on top without double counting.
+ * `null` removes the entry.
+ */
+export async function setCycleUsage(meterId: string, cycleDay: number, enteredKwh: number | null, now = new Date()) {
+  const { cycle, tracked } = await cycleUsageNow(meterId, cycleDay, now);
+  if (enteredKwh === null) {
+    await db
+      .delete(schema.meterAdjustments)
+      .where(and(eq(schema.meterAdjustments.meterId, meterId), eq(schema.meterAdjustments.cycleStart, cycle.start)));
+    return;
+  }
+  const missing = enteredKwh - tracked;
+  if (missing < -0.05) {
+    throw new Error(
+      `The breakers have already recorded ${tracked.toFixed(2)} kWh this cycle. Enter the meter's figure, which should be at least that.`,
+    );
+  }
+  const kwh = Math.max(missing, 0).toFixed(3);
+  await db
+    .insert(schema.meterAdjustments)
+    .values({ meterId, cycleStart: cycle.start, kwh })
+    .onConflictDoUpdate({
+      target: [schema.meterAdjustments.meterId, schema.meterAdjustments.cycleStart],
+      set: { kwh, updatedAt: new Date() },
+    });
+}
+
+// ---------------------------------------------------------------- prepaid balance
+
+export type PrepaidBalance = {
+  balanceTk: number;
+  anchorTk: number;
+  anchorAt: Date;
+  rechargedTk: number;
+  spentTk: number;
+  /** Average spend per day at this cycle's projected pace (fixed charges included). */
+  dailySpendTk: number;
+  daysLeft: number | null;
+  lastRecharge: { at: Date; amountTk: number } | null;
+};
+
+/**
+ * Estimated balance on a prepaid meter right now:
+ * balance read off the meter + recharges since − cost of the units used since.
+ * Within the anchor's cycle only the extra units cost money; each later cycle costs its whole bill.
+ */
+export async function prepaidBalance(meter: Meter, now = new Date()): Promise<PrepaidBalance | null> {
+  const [anchor] = await db.select().from(schema.meterBalances).where(eq(schema.meterBalances.meterId, meter.id));
+  if (!anchor) return null;
+
+  const recharges = await db
+    .select()
+    .from(schema.meterRecharges)
+    .where(eq(schema.meterRecharges.meterId, meter.id))
+    .orderBy(desc(schema.meterRecharges.at));
+  const rechargedTk = recharges.filter((r) => r.at > anchor.at).reduce((s, r) => s + Number(r.amountTk), 0);
+
+  const today = dhakaDay(now);
+  const current = cycleFor(today, meter.billingCycleDay);
+  const charges = meterCharges(meter);
+  const anchorKwh = Number(anchor.cycleKwh);
+  let spentTk = 0;
+
+  let cycle = cycleFor(anchor.cycleStart, meter.billingCycleDay);
+  for (let i = 0; i < 24 && cycle.start <= current.start; i++) {
+    const isCurrent = cycle.start === current.start;
+    const result = await meterBill(meter, cycle, isCurrent ? today : undefined);
+    if (result) {
+      if (i === 0) {
+        const t = await tariffFor(meter.tariffPlanId, cycle.start);
+        if (t) spentTk += marginalCost(anchorKwh, Math.max(result.kwh, anchorKwh), t.tariff, charges);
+      } else {
+        spentTk += result.bill.total;
+      }
+    }
+    cycle = cycleFor(addDays(cycle.end, 1), meter.billingCycleDay);
+  }
+
+  const projection = await currentCycleBill(meter, now);
+  const dailySpendTk = projection ? projection.projected.total / projection.daysInCycle : 0;
+  const balanceTk = Math.round((Number(anchor.balanceTk) + rechargedTk - spentTk) * 100) / 100;
+  const last = recharges[0];
+
+  return {
+    balanceTk,
+    anchorTk: Number(anchor.balanceTk),
+    anchorAt: anchor.at,
+    rechargedTk,
+    spentTk: Math.round(spentTk * 100) / 100,
+    dailySpendTk,
+    daysLeft: daysLeft(balanceTk, dailySpendTk),
+    lastRecharge: last ? { at: last.at, amountTk: Number(last.amountTk) } : null,
+  };
+}
+
+/** Records the balance shown on the meter now; recharges before this moment are treated as included. */
+export async function setPrepaidBalance(meter: Meter, balanceTk: number, now = new Date()) {
+  const { cycle, total } = await cycleUsageNow(meter.id, meter.billingCycleDay, now);
+  const row = { balanceTk: balanceTk.toFixed(2), at: now, cycleStart: cycle.start, cycleKwh: total.toFixed(3) };
+  await db
+    .insert(schema.meterBalances)
+    .values({ meterId: meter.id, ...row })
+    .onConflictDoUpdate({ target: schema.meterBalances.meterId, set: row });
 }

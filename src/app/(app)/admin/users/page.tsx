@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { PageHeader } from "@/components/page-header";
 import { db, schema } from "@/db";
 import { requireSuperAdmin } from "@/lib/session";
 import { ActionForm, SubmitButton } from "@/components/action-form";
@@ -25,12 +26,12 @@ export default async function UsersPage() {
 
   return (
     <div className="grid gap-6">
-      <h1 className="text-2xl font-semibold">Users</h1>
+      <PageHeader title="Users" description="Everyone who can sign in. Only the super admin can create accounts." />
 
       <Card>
         <CardHeader>
           <CardTitle>Add user</CardTitle>
-          <CardDescription>Only the super admin can create accounts. Share the password with the person directly.</CardDescription>
+          <CardDescription>Share the password with the person directly. They can&apos;t sign up on their own.</CardDescription>
         </CardHeader>
         <CardContent>
           <ActionForm action={createUser} className="grid gap-4 sm:grid-cols-2">

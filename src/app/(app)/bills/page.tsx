@@ -1,4 +1,5 @@
 import { desc, inArray } from "drizzle-orm";
+import { PageHeader } from "@/components/page-header";
 import Link from "next/link";
 import { db, schema } from "@/db";
 import { accessibleProfiles, isSuperAdmin, requireUser } from "@/lib/session";
@@ -49,22 +50,17 @@ export default async function BillsPage() {
 
   return (
     <div className="grid gap-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Bills</h1>
-          <p className="text-sm text-muted-foreground">
-            Worked out from the breakers&apos; readings and the meter&apos;s tariff. Your utility&apos;s meter may
-            differ slightly.
-          </p>
-        </div>
-        {admin && (
+      <PageHeader
+        title="Bills"
+        description="Worked out from the breakers' readings and each meter's tariff. Your utility's meter may differ slightly."
+        actions={admin && (
           <ActionForm action={finalizeNow} className="flex items-center gap-2">
             <SubmitButton variant="outline" size="sm">
               Store finished cycles now
             </SubmitButton>
           </ActionForm>
         )}
-      </div>
+      />
 
       {meters.length === 0 && (
         <p className="text-sm text-muted-foreground">
@@ -102,12 +98,14 @@ export default async function BillsPage() {
                       </Badge>
                     </div>
                     {c.partialFrom && <PartialNote from={c.partialFrom} />}
+                    {c.adjustmentKwh !== null && <AdjustmentNote kwh={c.adjustmentKwh} />}
                     <BillBreakdown bill={c.bill} />
                   </div>
                   <div className="grid content-start gap-2">
                     <h3 className="text-sm font-medium">Projected for the full cycle</h3>
                     <p className="text-sm text-muted-foreground">
                       At the pace so far: about {kwh(Math.round(c.projectedKwh))}.
+                      {!c.projectionReliable && " Rough estimate until there's a full day of readings."}
                     </p>
                     <BillBreakdown bill={c.projected} />
                   </div>
@@ -145,6 +143,7 @@ export default async function BillsPage() {
                                 </summary>
                                 <div className="mt-2 grid min-w-80 gap-2">
                                   {breakdown.partialFrom && <PartialNote from={breakdown.partialFrom} />}
+                                {breakdown.adjustmentKwh != null && <AdjustmentNote kwh={breakdown.adjustmentKwh} />}
                                   <BillBreakdown bill={breakdown} />
                                 </div>
                               </details>
@@ -176,6 +175,14 @@ export default async function BillsPage() {
         );
       })}
     </div>
+  );
+}
+
+function AdjustmentNote({ kwh: units }: { kwh: number }) {
+  return (
+    <p className="text-xs text-muted-foreground">
+      Includes {kwh(Math.round(units * 100) / 100)} entered from the meter for usage before the breakers started tracking.
+    </p>
   );
 }
 

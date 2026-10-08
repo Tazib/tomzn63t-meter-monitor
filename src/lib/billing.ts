@@ -119,3 +119,47 @@ export function cycleFor(day: string, cycleDay: number): Cycle {
 export function previousCycle(cycle: Cycle, cycleDay: number): Cycle {
   return cycleFor(addDays(cycle.start, -1), cycleDay);
 }
+
+// ---------------------------------------------------------------- prepaid balance & cost shares
+
+/**
+ * Fixed part of a bill: demand charge (after rebate, with its VAT) plus meter rent.
+ * Everything else scales with units used.
+ */
+export function fixedCharges(bill: Bill, tariff: Tariff, meter: MeterCharges): number {
+  const demandAfterRebate = bill.demandCharge * (1 - meter.rebatePercent / 100);
+  return money(demandAfterRebate * (1 + tariff.vatPercent / 100) + bill.meterRent);
+}
+
+/** What going from `fromKwh` to `toKwh` within one cycle costs (fixed charges cancel out). */
+export function marginalCost(fromKwh: number, toKwh: number, tariff: Tariff, meter: MeterCharges): number {
+  return money(computeBill(toKwh, tariff, meter).total - computeBill(fromKwh, tariff, meter).total);
+}
+
+export type CostPart = { key: string; label: string; kwh: number };
+export type CostShare = CostPart & { tk: number };
+
+/**
+ * Splits a cycle's bill across where the units went. The usage-driven part (energy charge with its
+ * rebate and VAT) is shared by kWh; fixed charges are reported on their own.
+ */
+export function allocateCost(
+  bill: Bill,
+  tariff: Tariff,
+  meter: MeterCharges,
+  parts: CostPart[],
+): { fixed: number; shares: CostShare[] } {
+  const fixed = Math.min(fixedCharges(bill, tariff, meter), bill.total);
+  const variable = Math.max(bill.total - fixed, 0);
+  const totalKwh = parts.reduce((s, p) => s + Math.max(p.kwh, 0), 0);
+  return {
+    fixed,
+    shares: parts.map((p) => ({ ...p, tk: totalKwh > 0 ? money((variable * Math.max(p.kwh, 0)) / totalKwh) : 0 })),
+  };
+}
+
+/** Days a balance lasts at a daily spend; null when there's no spend to measure yet. */
+export function daysLeft(balanceTk: number, dailySpendTk: number): number | null {
+  if (dailySpendTk <= 0) return null;
+  return Math.max(balanceTk, 0) / dailySpendTk;
+}

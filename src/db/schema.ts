@@ -210,6 +210,49 @@ export const devices = pgTable(
   (t) => [index("devices_meter_idx").on(t.meterId)],
 );
 
+// Units used in a billing cycle that the breakers didn't record (e.g. before tracking began).
+// Entered as "units this cycle so far" from the utility meter; stored as the difference from
+// what the breakers had recorded at that moment, so nothing is counted twice.
+export const meterAdjustments = pgTable(
+  "meter_adjustments",
+  {
+    meterId: uuid("meter_id")
+      .notNull()
+      .references(() => meters.id, { onDelete: "cascade" }),
+    cycleStart: date("cycle_start").notNull(),
+    kwh: numeric("kwh", { precision: 12, scale: 3 }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.meterId, t.cycleStart] })],
+);
+
+// Prepaid meters: the balance read off the meter at one moment (the anchor), plus recharges
+// after it. The app estimates today's balance from those and the usage cost since.
+export const meterBalances = pgTable("meter_balances", {
+  meterId: uuid("meter_id")
+    .primaryKey()
+    .references(() => meters.id, { onDelete: "cascade" }),
+  balanceTk: numeric("balance_tk", { precision: 12, scale: 2 }).notNull(),
+  at: timestamp("at", { withTimezone: true }).notNull(),
+  // Usage position at that moment, so cost since the anchor can be worked out exactly.
+  cycleStart: date("cycle_start").notNull(),
+  cycleKwh: numeric("cycle_kwh", { precision: 12, scale: 3 }).notNull(),
+});
+
+export const meterRecharges = pgTable(
+  "meter_recharges",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    meterId: uuid("meter_id")
+      .notNull()
+      .references(() => meters.id, { onDelete: "cascade" }),
+    at: timestamp("at", { withTimezone: true }).notNull(),
+    amountTk: numeric("amount_tk", { precision: 12, scale: 2 }).notNull(),
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+  },
+  (t) => [index("meter_recharges_meter_at_idx").on(t.meterId, t.at)],
+);
+
 // ---------------------------------------------------------------------------
 // Measurements
 // ---------------------------------------------------------------------------

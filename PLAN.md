@@ -46,7 +46,8 @@ with Bangladesh slab tariffs, plus money saved by solar.
 
 - Energy per device = change in `forward_energy_total` (with reset handling), summed per meter per billing cycle.
 - Bill = slab energy charge (or lifeline rate if the month is ≤ the lifeline limit) + demand charge × sanctioned kW − rebate % of (energy + demand) + VAT % of (energy + demand − rebate) + meter rent.
-- A cycle uses the tariff version in force on its first day. Cycles that began before tracking started are stored as **partial**.
+- A cycle uses the tariff version in force on its first day. Cycles that began before tracking started are stored as **partial**, unless the meter's "units used this cycle so far" was entered.
+- Entered units are stored per meter per cycle (`meter_adjustments`) as the difference between the meter's figure and what the breakers had recorded, so they never double count. They count toward the bill, slab position and projection, not the daily charts.
 - Projected bill for the current month, and "units left until the next slab".
 
 ## Phases

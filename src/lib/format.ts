@@ -29,3 +29,8 @@ export function period(start: string, end: string) {
 export function slabRange(fromKwh: number, toKwh: number | null) {
   return toKwh === null ? `${fromKwh}+ kWh` : `${fromKwh}–${toKwh} kWh`;
 }
+
+/** "31 Oct" from YYYY-MM-DD. */
+export function shortDate(day: string) {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+}

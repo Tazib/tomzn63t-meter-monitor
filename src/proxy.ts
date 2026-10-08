@@ -10,5 +10,6 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!login|api/auth|_next/static|_next/image|favicon.ico).*)"],
+  // Public: sign-in, auth API, Next assets, and the install files (manifest + icons) phones fetch signed-out.
+  matcher: ["/((?!login|api/auth|_next/static|_next/image|favicon.ico|icon.svg|manifest.webmanifest|icons/).*)"],
 };

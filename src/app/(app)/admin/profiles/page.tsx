@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { PageHeader } from "@/components/page-header";
 import { db, schema } from "@/db";
 import { requireSuperAdmin } from "@/lib/session";
 import { ActionForm, SubmitButton } from "@/components/action-form";
@@ -29,7 +30,7 @@ export default async function ProfilesPage() {
 
   return (
     <div className="grid gap-6">
-      <h1 className="text-2xl font-semibold">Profiles</h1>
+      <PageHeader title="Profiles" description="Households, the Smart Life account each one uses, and who can see it." />
 
       <Card>
         <CardHeader>

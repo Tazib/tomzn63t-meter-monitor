@@ -1,4 +1,5 @@
 import { asc, desc, inArray } from "drizzle-orm";
+import { PageHeader } from "@/components/page-header";
 import { db, schema } from "@/db";
 import { isSuperAdmin, requireUser } from "@/lib/session";
 import { SLAB_ROWS } from "@/lib/billing";
@@ -45,13 +46,10 @@ export default async function TariffsPage() {
 
   return (
     <div className="grid gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Tariffs</h1>
-        <p className="text-sm text-muted-foreground">
-          Rates are stored as data. When BERC changes them, add a new set of rates with its start date — old bills keep
-          the rates they were made with.
-        </p>
-      </div>
+      <PageHeader
+        title="Tariffs"
+        description="When BERC changes the rates, add a new set with its start date. Past bills keep the rates they were made with."
+      />
 
       {admin && (
         <Card>
@@ -110,7 +108,7 @@ export default async function TariffsPage() {
 
               {admin && (
                 <>
-                  <details className="rounded-lg border p-3">
+                  <details className="rounded-xl bg-muted/60 px-4 py-3">
                     <summary className="cursor-pointer text-sm font-medium">Add new rates</summary>
                     <VersionForm
                       planId={plan.id}
@@ -119,7 +117,7 @@ export default async function TariffsPage() {
                     />
                   </details>
 
-                  <details className="rounded-lg border p-3">
+                  <details className="rounded-xl bg-muted/60 px-4 py-3">
                     <summary className="cursor-pointer text-sm font-medium">Edit or delete plan</summary>
                     <div className="mt-4 grid gap-4">
                       <ActionForm

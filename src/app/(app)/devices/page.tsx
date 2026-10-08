@@ -1,4 +1,5 @@
 import { eq, inArray } from "drizzle-orm";
+import { PageHeader } from "@/components/page-header";
 import { formatDistanceToNow } from "date-fns";
 import { db, schema } from "@/db";
 import { accessibleProfiles, isSuperAdmin, requireUser } from "@/lib/session";
@@ -40,12 +41,10 @@ export default async function DevicesPage() {
 
   return (
     <div className="grid gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Devices</h1>
-        <p className="text-sm text-muted-foreground">
-          TOVA 63T breakers tracked for billing. The app only reads from them, it never switches them.
-        </p>
-      </div>
+      <PageHeader
+        title="Devices"
+        description="TOVA 63T breakers tracked for billing. The app only reads from them; it never switches them."
+      />
 
       {profiles.length === 0 && (
         <p className="text-sm text-muted-foreground">
@@ -108,8 +107,9 @@ async function ProfileDevices({
         <section className="grid gap-3">
           <h3 className="text-sm font-medium">Tracked devices</h3>
           {devices.length === 0 && <p className="text-sm text-muted-foreground">None yet.</p>}
+          <div>
           {devices.map((d) => (
-            <div key={d.id} className="grid gap-3 rounded-lg border p-3 md:grid-cols-[1fr_auto] md:items-center">
+            <div key={d.id} className="grid gap-3 border-t border-border py-4 first:border-t-0 first:pt-0 md:grid-cols-[1fr_auto] md:items-center">
               <div className="grid gap-1">
                 <div className="flex flex-wrap items-center gap-2 font-medium">
                   {d.name}
@@ -173,6 +173,7 @@ async function ProfileDevices({
               </details>
             </div>
           ))}
+          </div>
         </section>
 
         <section className="grid gap-3">
@@ -218,7 +219,7 @@ function AddDeviceForm({
   const m = parseStatus(device.status);
 
   return (
-    <ActionForm action={addDevice} className="grid gap-4 rounded-lg border p-3 sm:grid-cols-2 lg:grid-cols-4 lg:items-end">
+    <ActionForm action={addDevice} className="grid gap-4 rounded-xl bg-muted/60 p-4 sm:grid-cols-2 lg:grid-cols-4 lg:items-end">
       <input type="hidden" name="profileId" value={profileId} />
       <input type="hidden" name="tuyaDeviceId" value={device.id} />
       <div className="text-sm sm:col-span-2 lg:col-span-4">
