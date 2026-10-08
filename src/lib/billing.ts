@@ -163,3 +163,20 @@ export function daysLeft(balanceTk: number, dailySpendTk: number): number | null
   if (dailySpendTk <= 0) return null;
   return Math.max(balanceTk, 0) / dailySpendTk;
 }
+
+// ---------------------------------------------------------------- solar
+
+/**
+ * What the solar inverter saved this cycle.
+ *
+ * The inverter's loads draw `outputKwh`; the inverter itself took `inputKwh` from the grid (already
+ * inside `meterKwh`, since its input breaker sits under the meter). Without the inverter those loads
+ * would have come straight from the grid, so the meter would have read
+ * `meterKwh − inputKwh + outputKwh`. Saving = that bill − the real bill. It can be negative when the
+ * inverter drew more than it delivered (e.g. charging the battery from the grid on cloudy days).
+ */
+export function solarSaving(meterKwh: number, inputKwh: number, outputKwh: number, tariff: Tariff, meter: MeterCharges) {
+  const actual = computeBill(meterKwh, tariff, meter);
+  const billWithoutSolar = computeBill(Math.max(meterKwh - inputKwh + outputKwh, 0), tariff, meter);
+  return { billWithoutSolar, saving: money(billWithoutSolar.total - actual.total) };
+}

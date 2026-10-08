@@ -2,7 +2,7 @@
 // No "server-only" so the poller can finalise bills too.
 import { and, asc, between, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { addDays, computeBill, cycleFor, daysBetween, daysLeft, marginalCost, type Bill, type Cycle, type MeterCharges, type Tariff } from "@/lib/billing";
+import { addDays, solarSaving, computeBill, cycleFor, daysBetween, daysLeft, marginalCost, type Bill, type Cycle, type MeterCharges, type Tariff } from "@/lib/billing";
 import { dhakaDay } from "@/lib/energy";
 
 export type Meter = typeof schema.meters.$inferSelect;
@@ -129,8 +129,7 @@ export async function meterBill(meter: Meter, cycle: Cycle, endOverride?: string
   if (solar.length) {
     const outputKwh = sum(solar.map((d) => d.id));
     const inputKwh = sum(inputIds);
-    const billWithoutSolar = computeBill(kwh - inputKwh + outputKwh, t.tariff, charges);
-    solarResult = { outputKwh, inputKwh, billWithoutSolar, saving: Math.round((billWithoutSolar.total - bill.total) * 100) / 100 };
+    solarResult = { outputKwh, inputKwh, ...solarSaving(kwh, inputKwh, outputKwh, t.tariff, charges) };
   }
 
   const trackedSince = meterDevices.length ? new Date(Math.min(...meterDevices.map((d) => d.createdAt.getTime()))) : null;

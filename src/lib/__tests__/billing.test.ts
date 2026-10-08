@@ -10,6 +10,7 @@ import {
   marginalCost,
   nextPriceStep,
   previousCycle,
+  solarSaving,
   type Tariff,
 } from "@/lib/billing";
 
@@ -137,5 +138,30 @@ describe("allocateCost", () => {
     const bill = computeBill(0, tariff, meter);
     const { shares } = allocateCost(bill, tariff, meter, [{ key: "a", label: "A", kwh: 0 }]);
     expect(shares[0].tk).toBe(0);
+  });
+});
+
+describe("solarSaving", () => {
+  // A month: 150 kWh of other loads + 45 kWh drawn by the inverter = 195 kWh on the meter.
+  // The inverter delivered 180 kWh to its loads (solar + battery covered the difference).
+  it("values the solar output at the household's marginal slab rates", () => {
+    const { billWithoutSolar, saving } = solarSaving(195, 45, 180, tariff, meter);
+    expect(billWithoutSolar.kwh).toBe(330); // 195 − 45 + 180
+    expect(saving).toBeCloseTo(billWithoutSolar.total - computeBill(195, tariff, meter).total, 2);
+    expect(saving).toBeGreaterThan(1000); // keeps the house out of the 300–400 slab
+  });
+
+  it("is zero when the inverter only passes grid power through", () => {
+    expect(solarSaving(120, 30, 30, tariff, meter).saving).toBe(0);
+  });
+
+  it("can be negative when the inverter drew more than it delivered (battery charging)", () => {
+    expect(solarSaving(100, 20, 5, tariff, meter).saving).toBeLessThan(0);
+  });
+
+  it("captures slab effects: keeping a month on the lifeline rate is worth more than the units alone", () => {
+    // With solar: 45 kWh on the meter (lifeline). Without: 65 kWh, priced on the slabs for every unit.
+    const { saving } = solarSaving(45, 0, 20, tariff, plain);
+    expect(saving).toBeCloseTo(65 * 5.26 * 1.05 - 45 * 4.63 * 1.05, 1);
   });
 });
