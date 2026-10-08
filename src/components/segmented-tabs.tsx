@@ -47,7 +47,7 @@ export function SegmentedTabs({
   }
 
   return (
-    <div className={cn("grid gap-4", className)}>
+    <div className={cn("grid min-w-0 gap-4", className)}>
       <div
         role="tablist"
         aria-label={label}
@@ -84,7 +84,7 @@ export function SegmentedTabs({
           </button>
         ))}
       </div>
-      <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${active}`} key={tabs[active]?.key} className="rise">
+      <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${active}`} key={tabs[active]?.key} className="rise min-w-0">
         {panels[active]}
       </div>
     </div>

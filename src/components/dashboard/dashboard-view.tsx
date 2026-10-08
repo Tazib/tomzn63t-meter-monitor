@@ -11,7 +11,7 @@ import { SlabLadder } from "./slab-ladder";
 /** Everything for one view (all meters, or a single meter), top to bottom by importance. */
 export function DashboardView({ view }: { view: View }) {
   return (
-    <div className="grid gap-5">
+    <div className="grid min-w-0 gap-5">
       <Hero view={view} />
       <StatStrip view={view} />
       <BalancePanel view={view} />
@@ -54,11 +54,11 @@ export function Panel({
 }) {
   return (
     <section
-      className={cn("rise rounded-3xl bg-card p-5 ring-1 ring-foreground/[0.07] sm:p-7", className)}
+      className={cn("rise min-w-0 rounded-3xl bg-card p-5 ring-1 ring-foreground/[0.07] sm:p-7", className)}
       style={{ "--i": i } as React.CSSProperties}
     >
       {title && (
-        <div className="mb-5 flex items-baseline justify-between gap-3">
+        <div className="mb-5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <h2 className="text-[0.95rem] font-semibold tracking-tight">{title}</h2>
           {note && <span className="text-xs text-muted-foreground">{note}</span>}
         </div>
@@ -75,10 +75,10 @@ function Hero({ view }: { view: View }) {
 
   return (
     <section
-      className="rise grid overflow-hidden rounded-3xl bg-card ring-1 ring-foreground/[0.07] md:grid-cols-2"
+      className="rise grid min-w-0 overflow-hidden rounded-3xl bg-card ring-1 ring-foreground/[0.07] md:grid-cols-2"
       style={{ "--i": 0 } as React.CSSProperties}
     >
-      <div className="grid content-between gap-6 p-6 sm:p-8">
+      <div className="grid min-w-0 content-between gap-6 p-6 sm:p-8">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-muted-foreground">Using now</h2>
           <LiveBadge at={view.lastReadingAt} />
@@ -124,7 +124,7 @@ function Hero({ view }: { view: View }) {
         )}
       </div>
 
-      <div className="grid content-between gap-6 border-t border-border p-6 sm:p-8 md:border-t-0 md:border-l">
+      <div className="grid min-w-0 content-between gap-6 border-t border-border p-6 sm:p-8 md:border-t-0 md:border-l">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-muted-foreground">Projected bill</h2>
           {progress && (
@@ -249,14 +249,14 @@ function BreakerList({ devices, showMeter }: { devices: ViewDevice[]; showMeter:
   }
   const max = Math.max(...devices.map((d) => d.live?.powerW ?? 0), 1);
   return (
-    <ul className="-mx-2 grid">
+    <ul className="-mx-2 grid min-w-0">
       {devices.map((d) => {
         const w = d.live?.powerW ?? null;
         const state = !d.active ? "Paused" : d.live ? "Live" : d.online === false ? "Offline" : "No data";
         return (
           <li
             key={d.id}
-            className="grid grid-cols-[auto_1fr_auto] items-center gap-x-4 gap-y-2 rounded-xl px-2 py-3 transition-colors hover:bg-foreground/[0.03] sm:grid-cols-[auto_1.2fr_1fr_auto]"
+            className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 rounded-xl px-2 py-3 transition-colors hover:bg-foreground/[0.03] sm:grid-cols-[auto_minmax(0,1.2fr)_minmax(0,1fr)_auto]"
           >
             <span
               className={cn(
@@ -371,23 +371,23 @@ const dateFmt = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short
 function CostList({ costs, showMeter }: { costs: View["costs"]; showMeter: boolean }) {
   const rows = [
     ...costs.shares.map((s) => ({ key: s.key, label: s.label, sub: showMeter ? s.meterLabel : null, kwh: s.kwh, tk: s.tk, kind: s.key.startsWith("before-") ? "muted" : "grid" })),
-    { key: "fixed", label: "Fixed charges", sub: "Demand charge, meter rent and their VAT", kwh: null, tk: costs.fixed, kind: "muted" },
+    { key: "fixed", label: "Fixed charges", sub: "Demand charge, meter rent, VAT", kwh: null, tk: costs.fixed, kind: "muted" },
   ] as { key: string; label: string; sub: string | null; kwh: number | null; tk: number; kind: "grid" | "muted" }[];
   const max = Math.max(...rows.map((r) => r.tk), 1);
 
   return (
-    <ul className="grid gap-4">
+    <ul className="grid min-w-0 gap-4">
       {rows.map((r) => (
-        <li key={r.key} className="grid gap-1.5">
-          <div className="flex items-baseline justify-between gap-3 text-sm">
-            <span className="min-w-0 truncate">
-              <span className="font-medium">{r.label}</span>
-              {r.sub && <span className="text-muted-foreground"> · {r.sub}</span>}
+        <li key={r.key} className="grid min-w-0 gap-1.5">
+          <div className="flex min-w-0 items-end justify-between gap-3 text-sm">
+            <span className="grid min-w-0">
+              <span className="truncate font-medium">{r.label}</span>
+              {r.sub && <span className="truncate text-xs text-muted-foreground">{r.sub}</span>}
             </span>
             <span className="shrink-0 tabular-nums">
               {r.kwh !== null && <span className="text-muted-foreground">{kwh(Math.round(r.kwh * 10) / 10)} · </span>}
               <span className="font-semibold">{tk(r.tk)}</span>
-              <span className="ml-1.5 inline-block w-10 text-right text-xs text-muted-foreground">
+              <span className="ml-1.5 inline-block w-9 text-right text-xs text-muted-foreground">
                 {costs.total > 0 ? `${Math.round((r.tk / costs.total) * 100)}%` : ""}
               </span>
             </span>

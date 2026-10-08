@@ -46,7 +46,7 @@ export function SlabLadder({ ladder, showLabel }: { ladder: Ladder; showLabel: b
     <div className="grid gap-5">
       {showLabel && <div className="text-sm font-medium">{ladder.label}</div>}
 
-      <div className="relative pt-12">
+      <div className="relative overflow-x-clip pt-12">
         {/* Markers ride full-width layers shifted with translateX, so they glide on refresh. */}
         <Marker pct={pct(projected)} row={close ? 0 : 1} alignRight={projLabelRight} tone="muted">
           ≈ {kwh(roundKwh(projected))} by {shortDate(ladder.cycleEnd)}
@@ -81,18 +81,20 @@ export function SlabLadder({ ladder, showLabel }: { ladder: Ladder; showLabel: b
         </div>
 
         {lifelineMax !== null && lifelineMax < domain && ladder.lifeline && (
-          <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0">
-            <div className="absolute bottom-9 h-6 border-l border-dashed border-foreground/40" style={{ left: `${pct(lifelineMax)}%` }} />
-            <span
-              className="absolute -bottom-1 -translate-x-1/2 rounded-full bg-card px-1.5 text-[0.7rem] font-medium whitespace-nowrap text-foreground tabular-nums"
-              style={{ left: `${pct(lifelineMax)}%` }}
-            >
-              Lifeline {tk(tariff.lifelineRate ?? 0).replace(".00", "")} to {lifelineMax}
-            </span>
-          </div>
+          <div
+            aria-hidden
+            className="pointer-events-none absolute bottom-9 h-6 border-l border-dashed border-foreground/45"
+            style={{ left: `${pct(lifelineMax)}%` }}
+          />
         )}
       </div>
 
+      {lifelineMax !== null && ladder.lifeline && (
+        <p className="-mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+          <span aria-hidden className="h-3 border-l border-dashed border-foreground/45" />
+          Lifeline: {tk(tariff.lifelineRate ?? 0)} per unit while the month stays at or under {lifelineMax} kWh
+        </p>
+      )}
       <StepMessage ladder={ladder} stepSoon={stepSoon} daysToStep={daysToStep} />
     </div>
   );

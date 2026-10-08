@@ -27,34 +27,32 @@ export default async function DashboardPage() {
   const overview = buildView("all", meters.length > 1 ? "All meters" : meterLabel(meters[0].meter), meters);
   const perMeter = meters.map((m) => buildView(m.meter.id, meterLabel(m.meter), [m]));
 
+  const views = [overview, ...(meters.length > 1 ? perMeter : [])];
+  const subtitle = [profiles.length === 1 ? profiles[0].name : null, `${meters.length} meter${meters.length === 1 ? "" : "s"}`]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
-    <div className="grid gap-10">
+    <div className="grid min-w-0 gap-5">
       <AutoRefresh seconds={60} />
+      <div className="rise flex flex-wrap items-baseline justify-between gap-2">
+        <h1 className="text-[1.75rem] leading-tight font-semibold tracking-[-0.025em]">
+          {meters.length > 1 ? "Home" : overview.title}
+        </h1>
+        <span className="text-sm text-muted-foreground">{subtitle}</span>
+      </div>
 
-      <section className="grid gap-5">
-        <div className="rise flex flex-wrap items-baseline justify-between gap-2">
-          <h1 className="text-[1.75rem] leading-tight font-semibold tracking-[-0.025em]">{overview.title}</h1>
-          <span className="text-sm text-muted-foreground">
-            {meters.length > 1 ? `${meters.length} meters combined` : profiles.length > 1 ? "" : profiles[0].name}
-          </span>
-        </div>
+      {views.length > 1 ? (
+        // One view at a time: all meters combined, or a single meter. Never both on screen.
+        <SegmentedTabs
+          label="Show"
+          tabs={views.map((v) => ({ key: v.key, label: v.title }))}
+          panels={views.map((v) => (
+            <DashboardView key={v.key} view={v} />
+          ))}
+        />
+      ) : (
         <DashboardView view={overview} />
-      </section>
-
-      {perMeter.length > 1 && (
-        <section className="grid gap-5">
-          <div className="grid gap-1">
-            <h2 className="text-xl font-semibold tracking-[-0.02em]">By meter</h2>
-            <p className="text-sm text-muted-foreground">The same numbers for each meter on its own.</p>
-          </div>
-          <SegmentedTabs
-            label="Meter"
-            tabs={perMeter.map((v) => ({ key: v.key, label: v.title }))}
-            panels={perMeter.map((v) => (
-              <DashboardView key={v.key} view={v} />
-            ))}
-          />
-        </section>
       )}
     </div>
   );
