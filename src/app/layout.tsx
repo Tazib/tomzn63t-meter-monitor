@@ -44,7 +44,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
       suppressHydrationWarning
     >
-      <body className="flex min-h-full flex-col bg-background">
+      {/* Extensions (e.g. ColorZilla's cz-shortcut-listen) add attributes to <body> before React loads. */}
+      <body className="flex min-h-full flex-col bg-background" suppressHydrationWarning>
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
