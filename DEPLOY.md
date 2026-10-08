@@ -3,8 +3,8 @@
 This guide puts the Energy Tracker on a Linux server that runs **aaPanel**, at a free address like
 `https://myhome.duckdns.org`. It takes about an hour the first time.
 
-There are two ways to run it. **Use Docker if aaPanel's App Store offers it**: Postgres, the web app and the
-poller then run in containers and update with one command. If Docker isn't available, use **PM2** (path B).
+There are two ways to run it. **Use path A (aaPanel's own Node.js and PostgreSQL, with PM2)**: it fits how
+aaPanel works, needs no extra layer and uses the least memory. Path B (Docker) is there if you prefer containers.
 
 What runs:
 
@@ -65,50 +65,9 @@ Keep this file private. It holds the Tuya secret.
 
 ---
 
-## Path A: Docker (recommended)
+## Path A: aaPanel Node.js + PM2 (recommended)
 
-### A1. Install Docker
-
-aaPanel → **App Store** → install **Docker** (it includes Docker Compose). Check in the terminal:
-
-```sh
-docker compose version
-```
-
-### A2. Build and start
-
-```sh
-cd /www/wwwroot/energy
-docker compose up -d --build
-```
-
-The first build takes a few minutes.
-
-### A3. Create the tables and the first data
-
-```sh
-docker compose run --rm app npm run db:migrate
-docker compose run --rm app npm run seed:admin
-docker compose run --rm app npm run seed:tariffs
-```
-
-### A4. Check it's running
-
-```sh
-docker compose ps                  # db, app and poller should all be "running"
-docker compose logs -f poller      # a line every minute: "polled N devices…"  (Ctrl+C to stop)
-curl -I http://127.0.0.1:3000/login   # should print HTTP/1.1 200
-```
-
-The poller logs `polled 0 devices` until devices are added in the app. That's expected.
-
-Continue with **step 4 (Nginx + HTTPS)**.
-
----
-
-## Path B: PM2 without Docker
-
-### B1. Database
+### A1. Database
 
 aaPanel → **App Store** → install **PostgreSQL** (version 14 or newer). Then aaPanel → **Databases** →
 PgSQL → **Add database**:
@@ -117,7 +76,7 @@ PgSQL → **Add database**:
 - Username: `smarthome`
 - Password: a strong password. Put it in `DATABASE_URL` in `.env`.
 
-### B2. Node.js and PM2
+### A2. Node.js and PM2
 
 aaPanel → **App Store** → install **Node.js version manager**, then install Node **22** from it. In the
 terminal:
@@ -127,7 +86,7 @@ node -v          # v22.x
 npm install -g pm2
 ```
 
-### B3. Build
+### A3. Build
 
 ```sh
 cd /www/wwwroot/energy
@@ -138,7 +97,7 @@ npm run seed:admin
 npm run seed:tariffs
 ```
 
-### B4. Start and keep it running after reboots
+### A4. Start and keep it running after reboots
 
 ```sh
 pm2 start ecosystem.config.cjs
@@ -153,6 +112,47 @@ pm2 status                    # energy-web and energy-poller "online"
 pm2 logs energy-poller        # a line every minute (Ctrl+C to stop)
 curl -I http://127.0.0.1:3000/login
 ```
+
+---
+
+## Path B: Docker (optional)
+
+### B1. Install Docker
+
+aaPanel → **App Store** → install **Docker** (it includes Docker Compose). Check in the terminal:
+
+```sh
+docker compose version
+```
+
+### B2. Build and start
+
+```sh
+cd /www/wwwroot/energy
+docker compose up -d --build
+```
+
+The first build takes a few minutes.
+
+### B3. Create the tables and the first data
+
+```sh
+docker compose run --rm app npm run db:migrate
+docker compose run --rm app npm run seed:admin
+docker compose run --rm app npm run seed:tariffs
+```
+
+### B4. Check it's running
+
+```sh
+docker compose ps                  # db, app and poller should all be "running"
+docker compose logs -f poller      # a line every minute: "polled N devices…"  (Ctrl+C to stop)
+curl -I http://127.0.0.1:3000/login   # should print HTTP/1.1 200
+```
+
+The poller logs `polled 0 devices` until devices are added in the app. That's expected.
+
+Continue with **step 4 (Nginx + HTTPS)**.
 
 ---
 
@@ -196,7 +196,18 @@ aaPanel renews the Let's Encrypt certificate automatically.
    the grid breaker that feeds the inverter as its **Inverter input**. All of this can be changed later
    under the breaker's **Settings** on the Devices page.
 
-Usage counts from the moment a breaker is added. The first billing cycle is marked **Partial**.
+Usage counts from the moment a breaker is added. When adding a meter partway through a month, fill in
+**Units used this cycle so far** from the meter so the first bill is complete. For prepaid meters, open the
+meter and enter the **balance** the meter shows, then log each **recharge** as you make it.
+
+## 6. Install it on phones
+
+The site can be installed like an app (opens full screen, own icon):
+
+- **Android (Chrome)**: open the site, tap the ⋮ menu → **Install app** (or **Add to Home screen**).
+- **iPhone (Safari)**: open the site, tap **Share** → **Add to Home Screen**.
+
+This needs the HTTPS address from step 4; it doesn't work over plain `http://`.
 
 ---
 
@@ -217,6 +228,7 @@ docker compose run --rm app npm run db:migrate
 cd /www/wwwroot/energy
 git pull
 npm ci
+npm test            # optional: checks the bill maths before going live
 npm run build
 npm run db:migrate
 pm2 restart all

@@ -100,10 +100,12 @@ function Hero({ view }: { view: View }) {
         </div>
         {view.hasSolar ? (
           <div className="grid gap-2.5">
-            <div className="flex h-1.5 gap-[3px] overflow-hidden rounded-full">
-              <div className="fill-bar rounded-full bg-grid" style={{ flexGrow: gridShare, flexBasis: 0 }} />
-              <div className="fill-bar rounded-full bg-solar" style={{ flexGrow: 1 - gridShare, flexBasis: 0 }} />
-            </div>
+            {total > 0 && (
+              <div className="flex h-1.5 gap-[3px] overflow-hidden rounded-full">
+                <div className="fill-bar rounded-full bg-grid" style={{ flexGrow: gridShare, flexBasis: 0 }} />
+                <div className="fill-bar rounded-full bg-solar" style={{ flexGrow: 1 - gridShare, flexBasis: 0 }} />
+              </div>
+            )}
             <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm">
               <Legend color="bg-grid" label="Grid" value={view.liveGridW} />
               <Legend color="bg-solar" label="Solar" value={view.liveSolarW} />
@@ -325,7 +327,7 @@ function BalancePanel({ view }: { view: View }) {
 
   return (
     <Panel title="Prepaid balance" note={view.balances.length > 1 ? "Estimated from usage and recharges" : undefined} i={1}>
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className={cn("grid gap-6", view.balances.length > 1 && "md:grid-cols-2")}>
         {view.balances.map(({ meterId, label, balance: b }) => {
           const low = b.balanceTk <= 0 || (b.daysLeft !== null && b.daysLeft < 3);
           const cover = b.daysLeft === null ? 0 : Math.min(b.daysLeft / 30, 1);

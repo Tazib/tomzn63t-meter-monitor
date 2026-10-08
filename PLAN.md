@@ -50,6 +50,14 @@ with Bangladesh slab tariffs, plus money saved by solar.
 - Entered units are stored per meter per cycle (`meter_adjustments`) as the difference between the meter's figure and what the breakers had recorded, so they never double count. They count toward the bill, slab position and projection, not the daily charts.
 - Projected bill for the current month, and "units left until the next slab".
 
+## Prepaid balance and cost shares
+
+- Prepaid: the user enters the balance shown on the meter (stored with the cycle's usage at that moment) and logs
+  recharges. Estimated balance = entered balance + recharges since − cost of units since (marginal cost within the
+  anchor's cycle, full bills for later cycles). Days left = balance ÷ (projected cycle bill ÷ days in cycle).
+- "Where the money goes": the cycle bill's usage-driven part (energy charge with rebate and VAT) is shared across
+  breakers (and entered units) by kWh; demand charge, meter rent and their VAT are shown as fixed charges.
+
 ## Phases
 
 1. Project setup, database schema, login + roles, profile management

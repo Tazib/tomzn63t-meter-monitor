@@ -93,7 +93,10 @@ export default async function MetersPage() {
                       {plans.find((pl) => pl.id === m.tariffPlanId)?.name} · {Number(m.sanctionedLoadKw)} kW
                       {m.billingCycleDay === 1 ? " · calendar month" : ` · cycle starts day ${m.billingCycleDay}`}
                     </span>
-                    <span className="ml-auto font-medium tabular-nums">{kwh(Math.round((usage.get(m.id)?.total ?? 0) * 10) / 10)} this cycle</span>
+                    <span className="ml-auto flex gap-4 font-medium tabular-nums">
+                      {balances.get(m.id) && <span>{tk(balances.get(m.id)!.balanceTk)} balance</span>}
+                      <span>{kwh(Math.round((usage.get(m.id)?.total ?? 0) * 10) / 10)} this cycle</span>
+                    </span>
                   </summary>
                   <div className="mt-4 grid gap-4">
                     <MeterForm meter={m} plans={plans} usage={usage.get(m.id)} />

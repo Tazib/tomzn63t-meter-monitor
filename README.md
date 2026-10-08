@@ -29,6 +29,7 @@ npm run poller           # in a second terminal: reads the breakers every minute
 | `poller` | Polls Tuya every `POLL_INTERVAL_SECONDS`; hourly stores finished bills and prunes old readings |
 | `db:generate` / `db:migrate` / `db:studio` | Drizzle schema migrations |
 | `seed:admin` / `seed:tariffs` | First super admin, default tariff (both safe to re-run) |
+| `test` | Unit tests for bill maths, counter deltas, data-point decoding, cost shares, balance days |
 | `typecheck` / `lint` | Checks |
 
 ## Where things live

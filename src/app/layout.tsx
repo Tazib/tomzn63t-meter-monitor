@@ -18,7 +18,14 @@ export const metadata: Metadata = {
   description: "Electricity use, bills and solar savings",
   applicationName: "Energy Tracker",
   appleWebApp: { capable: true, title: "Energy", statusBarStyle: "default" },
-  icons: { apple: "/icons/apple-touch-icon.png" },
+  // Listing icons here replaces the automatic app/icon.svg link, so name all of them.
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/icons/icon-192.png", type: "image/png", sizes: "192x192" }, // Safari has no SVG favicons
+    ],
+    apple: "/icons/apple-touch-icon.png",
+  },
 };
 
 // Matches the canvas colour in each theme so the phone's status bar blends in.
