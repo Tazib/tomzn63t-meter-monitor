@@ -10,7 +10,7 @@ What runs:
 
 | Part | What it does |
 |---|---|
-| Web app | The website (Next.js) on port 3000, reachable only from the server itself |
+| Web app | The website (Next.js) on `PORT` (default 3100), reachable only from the server itself |
 | Poller | Reads every breaker from Tuya once a minute, stores usage, and stores each bill when a billing cycle ends |
 | PostgreSQL | The database |
 | Nginx | Public HTTPS entry point (managed by aaPanel), forwards to the web app |
@@ -55,6 +55,7 @@ Edit `/www/wwwroot/energy/.env` (aaPanel **Files** has an editor):
 |---|---|
 | `BETTER_AUTH_SECRET` | A long random string: run `openssl rand -base64 32` and paste the output |
 | `BETTER_AUTH_URL` | `https://myhome.duckdns.org` (your real address, with https) |
+| `PORT` | **PM2 only:** a free port for the app, default `3100`. Check with `ss -ltn \| grep :3100` (no output = free) |
 | `TUYA_BASE_URL` | `https://openapi.tuyaeu.com` |
 | `TUYA_ACCESS_ID` / `TUYA_ACCESS_SECRET` | From the Tuya developer site → Cloud → your project → Overview |
 | `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | The first super admin login (password 8+ characters) |
@@ -110,7 +111,7 @@ Check:
 ```sh
 pm2 status                    # energy-web and energy-poller "online"
 pm2 logs energy-poller        # a line every minute (Ctrl+C to stop)
-curl -I http://127.0.0.1:3000/login
+curl -I http://127.0.0.1:3100/login   # your PORT
 ```
 
 ---
@@ -165,7 +166,7 @@ Continue with **step 4 (Nginx + HTTPS)**.
    Then turn on **Force HTTPS**.
 3. Open the site → **Reverse proxy** → **Add reverse proxy**
    - Name: `energy`
-   - Target URL: `http://127.0.0.1:3000`
+   - Target URL: `http://127.0.0.1:3100` (your `PORT`; Docker uses `3000`)
    - Sent domain: `$host`
 4. In the reverse proxy's **Config file**, make sure the `location /` block contains these lines. Add
    the missing ones; the last line lets pages stream instead of waiting for the whole page:
