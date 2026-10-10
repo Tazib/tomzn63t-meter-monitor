@@ -382,7 +382,7 @@ async function ProfileInverters({
                     <div className="text-sm text-muted-foreground">
                       Valued against meter {meters.find((m) => m.id === s.meterId)?.label ?? meters.find((m) => m.id === s.meterId)?.meterNo ?? "—"}
                       {" · "}
-                      {s.gridDrawMetered ? "grid draw measured by a breaker" : "grid draw added to the meter from Deye"}
+                      {s.gridDrawMetered ? "grid power into the inverter measured by a breaker" : "grid power into the inverter taken from Deye"}
                     </div>
                     <div className="text-sm text-muted-foreground">
                       Station {s.deyeStationId}
@@ -552,12 +552,15 @@ function StationFields({
         </NativeSelect>
       </div>
       <div className="grid gap-2">
-        <Label htmlFor={id("metered")}>Is its grid input on a tracked breaker?</Label>
+        <Label htmlFor={id("metered")}>Grid power into the inverter</Label>
         <NativeSelect id={id("metered")} name="gridDrawMetered" defaultValue={metered}>
           {!metered && <option value="">Pick one…</option>}
-          <option value="no">No: add Deye&apos;s grid figure to the meter</option>
-          <option value="yes">Yes: a breaker already counts it</option>
+          <option value="yes">A breaker in this app measures it</option>
+          <option value="no">No breaker: use Deye&apos;s figure</option>
         </NativeSelect>
+        <p className="text-xs text-muted-foreground">
+          Pick the first if a 63T sits between the meter and the inverter&apos;s grid input, so it isn&apos;t counted twice.
+        </p>
       </div>
     </>
   );
