@@ -13,10 +13,12 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { addDevice, deleteDevice, setDeviceActive, updateDevice } from "./actions";
+import { deyeConfigured, listStations, type DeyeStation } from "@/lib/deye/client";
+import { addDevice, addStation, deleteDevice, deleteStation, setDeviceActive, setStationActive, updateDevice, updateStation } from "./actions";
 
 type Meter = typeof schema.meters.$inferSelect;
 type Device = typeof schema.devices.$inferSelect;
+type Station = typeof schema.solarStations.$inferSelect;
 
 // Per-user data from the database on every request (see the (app) layout).
 export const instant = false;
@@ -27,7 +29,7 @@ export default async function DevicesPage() {
   const profiles = await accessibleProfiles(user);
   const profileIds = profiles.map((p) => p.id);
 
-  const [meters, devices] = profileIds.length
+  const [meters, devices, stations] = profileIds.length
     ? await Promise.all([
         db.select().from(schema.meters).where(inArray(schema.meters.profileId, profileIds)).orderBy(schema.meters.meterNo),
         db
@@ -36,8 +38,20 @@ export default async function DevicesPage() {
           .innerJoin(schema.meters, eq(schema.meters.id, schema.devices.meterId))
           .where(inArray(schema.meters.profileId, profileIds))
           .orderBy(schema.devices.name),
+        db.select().from(schema.solarStations).where(inArray(schema.solarStations.profileId, profileIds)).orderBy(schema.solarStations.name),
       ])
-    : [[], []];
+    : [[], [], []];
+
+  // The Deye account is shared by the whole app, so only the super admin sees its station list.
+  let deyeStations: DeyeStation[] = [];
+  let deyeError: string | null = null;
+  if (admin && deyeConfigured()) {
+    try {
+      deyeStations = await listStations();
+    } catch (e) {
+      deyeError = errorMessage(e);
+    }
+  }
 
   return (
     <div className="grid gap-6">
@@ -58,6 +72,18 @@ export default async function DevicesPage() {
           profile={p}
           meters={meters.filter((m) => m.profileId === p.id)}
           devices={devices.filter((d) => d.profileId === p.id).map((d) => d.device)}
+          admin={admin}
+        />
+      ))}
+
+      {profiles.map((p) => (
+        <ProfileInverters
+          key={`inv-${p.id}`}
+          profile={p}
+          meters={meters.filter((m) => m.profileId === p.id)}
+          stations={stations.filter((s) => s.profileId === p.id)}
+          linkable={deyeStations.filter((d) => !stations.some((s) => s.deyeStationId === d.id))}
+          deyeError={deyeError}
           admin={admin}
         />
       ))}
@@ -299,6 +325,187 @@ function PlacementFields({
               {g.name}
             </option>
           ))}
+        </NativeSelect>
+      </div>
+    </>
+  );
+}
+
+/** Deye inverters read from Deye Cloud: no breaker needed for solar figures. */
+function ProfileInverters({
+  profile,
+  meters,
+  stations,
+  linkable,
+  deyeError,
+  admin,
+}: {
+  profile: { id: string; name: string };
+  meters: Meter[];
+  stations: Station[];
+  linkable: DeyeStation[];
+  deyeError: string | null;
+  admin: boolean;
+}) {
+  if (!admin && stations.length === 0) return null;
+  const configured = deyeConfigured();
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Solar inverters · {profile.name}</CardTitle>
+        <CardDescription>
+          Deye inverters read from Deye Cloud every 5 minutes. They give solar, home use and grid figures without any breaker.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-6">
+        {stations.length > 0 && (
+          <section className="grid gap-3">
+            <h3 className="text-sm font-medium">Linked</h3>
+            <div>
+              {stations.map((s) => (
+                <div key={s.id} className="grid gap-3 border-t border-border py-4 first:border-t-0 first:pt-0 md:grid-cols-[1fr_auto] md:items-center">
+                  <div className="grid gap-1">
+                    <div className="flex flex-wrap items-center gap-2 font-medium">
+                      {s.name}
+                      <Badge>Deye</Badge>
+                      {!s.active ? <Badge variant="outline">Paused</Badge> : s.lastError ? <Badge variant="destructive">Error</Badge> : null}
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      Valued against meter {meters.find((m) => m.id === s.meterId)?.label ?? meters.find((m) => m.id === s.meterId)?.meterNo ?? "—"}
+                      {" · "}
+                      {s.gridDrawMetered ? "grid draw measured by a breaker" : "grid draw added to the meter from Deye"}
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      Station {s.deyeStationId}
+                      {s.lastSeenAt && ` · last report ${formatDistanceToNow(s.lastSeenAt, { addSuffix: true })}`}
+                      {!s.backfilledAt && " · history loads on the next poll"}
+                    </div>
+                    {s.lastError && <div className="text-sm text-destructive">{s.lastError}</div>}
+                  </div>
+                  <div className="flex flex-wrap items-start gap-2">
+                    <ActionForm action={setStationActive}>
+                      <input type="hidden" name="stationId" value={s.id} />
+                      <input type="hidden" name="active" value={String(!s.active)} />
+                      <SubmitButton variant="outline" size="sm">
+                        {s.active ? "Pause" : "Resume"}
+                      </SubmitButton>
+                    </ActionForm>
+                    {admin && (
+                      <ActionForm action={deleteStation}>
+                        <input type="hidden" name="stationId" value={s.id} />
+                        <SubmitButton variant="destructive" size="sm">
+                          Remove
+                        </SubmitButton>
+                      </ActionForm>
+                    )}
+                  </div>
+                  <details className="md:col-span-2">
+                    <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">Settings</summary>
+                    <ActionForm action={updateStation} resetOnSuccess={false} className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 lg:items-end">
+                      <input type="hidden" name="stationId" value={s.id} />
+                      <StationFields idPrefix={s.id} name={s.name} meterId={s.meterId} gridDrawMetered={s.gridDrawMetered} meters={meters} />
+                      <div className="sm:col-span-2 lg:col-span-3">
+                        <SubmitButton variant="outline" size="sm">
+                          Save settings
+                        </SubmitButton>
+                      </div>
+                    </ActionForm>
+                  </details>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {admin && (
+          <section className="grid gap-3">
+            <h3 className="text-sm font-medium">Link an inverter</h3>
+            {!configured ? (
+              <p className="text-sm text-muted-foreground">
+                Add DEYE_APP_ID, DEYE_APP_SECRET, DEYE_EMAIL and DEYE_PASSWORD to the server&apos;s .env (see .env.example), then restart.
+              </p>
+            ) : deyeError ? (
+              <Alert variant="destructive">
+                <AlertTitle>Couldn&apos;t reach Deye Cloud</AlertTitle>
+                <AlertDescription>{deyeError}</AlertDescription>
+              </Alert>
+            ) : meters.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Add a meter to this profile first. Savings are priced on its tariff.</p>
+            ) : linkable.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Every station on the Deye account is already linked.</p>
+            ) : (
+              linkable.map((d) => (
+                <ActionForm
+                  key={d.id}
+                  action={addStation}
+                  className="grid gap-4 rounded-xl bg-muted/60 p-4 sm:grid-cols-2 lg:grid-cols-3 lg:items-end"
+                >
+                  <input type="hidden" name="profileId" value={profile.id} />
+                  <input type="hidden" name="deyeStationId" value={d.id} />
+                  <div className="text-sm sm:col-span-2 lg:col-span-3">
+                    <span className="font-medium">{d.name}</span>{" "}
+                    <span className="text-muted-foreground tabular-nums">
+                      · station {d.id}
+                      {d.installedCapacity ? ` · ${d.installedCapacity} kWp` : ""}
+                    </span>
+                  </div>
+                  <StationFields
+                    idPrefix={d.id}
+                    name={d.name}
+                    meterId={meters.length === 1 ? meters[0].id : ""}
+                    gridDrawMetered={false}
+                    meters={meters}
+                  />
+                  <div className="sm:col-span-2 lg:col-span-3">
+                    <SubmitButton>Link this inverter</SubmitButton>
+                  </div>
+                </ActionForm>
+              ))
+            )}
+          </section>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function StationFields({
+  idPrefix,
+  name,
+  meterId,
+  gridDrawMetered,
+  meters,
+}: {
+  idPrefix: string;
+  name: string;
+  meterId: string;
+  gridDrawMetered: boolean;
+  meters: Meter[];
+}) {
+  const id = (field: string) => `${idPrefix}-${field}`;
+  return (
+    <>
+      <div className="grid gap-2">
+        <Label htmlFor={id("name")}>Name</Label>
+        <Input id={id("name")} name="name" defaultValue={name} required />
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor={id("meter")}>Meter it draws grid power through</Label>
+        <NativeSelect id={id("meter")} name="meterId" defaultValue={meterId}>
+          {!meterId && <option value="">Pick a meter…</option>}
+          {meters.map((mt) => (
+            <option key={mt.id} value={mt.id}>
+              {mt.label ? `${mt.label} (${mt.meterNo})` : mt.meterNo}
+            </option>
+          ))}
+        </NativeSelect>
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor={id("metered")}>Is its grid input on a tracked breaker?</Label>
+        <NativeSelect id={id("metered")} name="gridDrawMetered" defaultValue={gridDrawMetered ? "yes" : "no"}>
+          <option value="no">No: add Deye&apos;s grid figure to the meter</option>
+          <option value="yes">Yes: a breaker already counts it</option>
         </NativeSelect>
       </div>
     </>

@@ -165,3 +165,18 @@ describe("solarSaving", () => {
     expect(saving).toBeCloseTo(65 * 5.26 * 1.05 - 45 * 4.63 * 1.05, 1);
   });
 });
+
+describe("solarSaving with Deye figures (no breakers on the inverter)", () => {
+  // Breakers saw 150 kWh of other loads. Deye says the inverter bought 40 kWh from the grid and its
+  // loads used 220 kWh. With the grid draw added, the meter reads 190 kWh.
+  it("is the bill for meter − bought + home use, minus the real bill", () => {
+    const meterKwh = 150 + 40;
+    const { billWithoutSolar, saving } = solarSaving(meterKwh, 40, 220, tariff, meter);
+    expect(billWithoutSolar.kwh).toBe(370);
+    expect(saving).toBeCloseTo(computeBill(370, tariff, meter).total - computeBill(190, tariff, meter).total, 2);
+  });
+
+  it("is zero on a day with no sun when everything came from the grid", () => {
+    expect(solarSaving(190, 40, 40, tariff, meter).saving).toBe(0);
+  });
+});

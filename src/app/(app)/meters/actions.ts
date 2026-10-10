@@ -112,6 +112,8 @@ export async function deleteMeter(_: ActionResult | null, formData: FormData): P
     await assertProfileAccess(user, await meterProfile(meterId));
     const devices = await db.select({ id: schema.devices.id }).from(schema.devices).where(eq(schema.devices.meterId, meterId));
     if (devices.length) return { ok: false, message: "Move or delete this meter's devices first" };
+    const stations = await db.select({ id: schema.solarStations.id }).from(schema.solarStations).where(eq(schema.solarStations.meterId, meterId));
+    if (stations.length) return { ok: false, message: "Move or remove this meter's solar inverters first (Devices page)" };
     await db.delete(schema.meters).where(eq(schema.meters.id, meterId));
   } catch (e) {
     return { ok: false, message: friendly(e) };

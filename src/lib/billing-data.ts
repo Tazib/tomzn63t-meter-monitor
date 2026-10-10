@@ -70,6 +70,37 @@ export async function deviceKwh(deviceIds: string[], start: string, end: string)
   return out;
 }
 
+/** Deye totals per station between two days (inclusive). */
+export async function stationKwh(stationIds: string[], start: string, end: string) {
+  const out = new Map<string, { generation: number; consumption: number; purchase: number; export: number }>();
+  if (stationIds.length === 0) return out;
+  const d = schema.solarDaily;
+  const rows = await db
+    .select({
+      stationId: d.stationId,
+      generation: sql<string>`sum(${d.generationKwh})`,
+      consumption: sql<string>`sum(${d.consumptionKwh})`,
+      purchase: sql<string>`sum(${d.purchaseKwh})`,
+      export: sql<string>`sum(${d.exportKwh})`,
+    })
+    .from(d)
+    .where(and(inArray(d.stationId, stationIds), between(d.day, start, end)))
+    .groupBy(d.stationId);
+  for (const r of rows)
+    out.set(r.stationId, { generation: Number(r.generation), consumption: Number(r.consumption), purchase: Number(r.purchase), export: Number(r.export) });
+  return out;
+}
+
+/** What unmetered Deye inverters on a meter bought from the grid: their share of the meter's usage. */
+async function inverterGridDraw(meterId: string, start: string, end: string) {
+  const stations = await db
+    .select()
+    .from(schema.solarStations)
+    .where(and(eq(schema.solarStations.meterId, meterId), eq(schema.solarStations.gridDrawMetered, false)));
+  const usage = await stationKwh(stations.map((s) => s.id), start, end);
+  return stations.map((s) => ({ stationId: s.id, name: s.name, kwh: usage.get(s.id)?.purchase ?? 0 }));
+}
+
 export type SolarResult = { outputKwh: number; inputKwh: number; billWithoutSolar: Bill; saving: number };
 
 export type MeterBill = {
@@ -86,6 +117,8 @@ export type MeterBill = {
   adjustmentKwh: number | null;
   /** kWh recorded by the grid breakers alone. */
   trackedKwh: number;
+  /** Grid power bought by Deye inverters that no breaker measures (already inside `kwh`). */
+  inverterGrid: { stationId: string; name: string; kwh: number }[];
 };
 
 /** What a stored bill's breakdown JSON holds. */
@@ -102,9 +135,10 @@ export async function adjustmentFor(meterId: string, cycleStart: string): Promis
 
 /**
  * Bill for one meter over a cycle.
- * Meter kWh = sum of its grid devices. Solar saving =
- *   bill(meter kWh − inverter input + inverter output) − bill(meter kWh)
- * i.e. what the inverter's loads would have cost straight from the grid.
+ * Meter kWh = sum of its grid devices (+ entered units, + grid bought by unmetered Deye inverters).
+ * Solar saving = bill(meter kWh − inverter input + inverter output) − bill(meter kWh),
+ * i.e. what the inverter's loads would have cost straight from the grid. Inverter input/output come
+ * from solar breakers, or from Deye ("bought from grid" / "consumption") for linked stations.
  */
 export async function meterBill(meter: Meter, cycle: Cycle, endOverride?: string): Promise<MeterBill | null> {
   const t = await tariffFor(meter.tariffPlanId, cycle.start);
@@ -119,20 +153,28 @@ export async function meterBill(meter: Meter, cycle: Cycle, endOverride?: string
   const usage = await deviceKwh([...grid.map((d) => d.id), ...solar.map((d) => d.id), ...inputIds], cycle.start, end);
   const sum = (ids: string[]) => ids.reduce((s, id) => s + (usage.get(id) ?? 0), 0);
 
+  const stations = await db.select().from(schema.solarStations).where(eq(schema.solarStations.meterId, meter.id));
+  const deye = await stationKwh(stations.map((s) => s.id), cycle.start, end);
+  const inverterGrid = stations
+    .filter((s) => !s.gridDrawMetered)
+    .map((s) => ({ stationId: s.id, name: s.name, kwh: deye.get(s.id)?.purchase ?? 0 }));
+
   const trackedKwh = sum(grid.map((d) => d.id));
   const adjustmentKwh = await adjustmentFor(meter.id, cycle.start);
-  const kwh = Math.max(trackedKwh + (adjustmentKwh ?? 0), 0);
+  const kwh = Math.max(trackedKwh + (adjustmentKwh ?? 0) + inverterGrid.reduce((s, x) => s + x.kwh, 0), 0);
   const charges = meterCharges(meter);
   const bill = computeBill(kwh, t.tariff, charges);
 
   let solarResult: SolarResult | null = null;
-  if (solar.length) {
-    const outputKwh = sum(solar.map((d) => d.id));
-    const inputKwh = sum(inputIds);
+  if (solar.length || stations.length) {
+    const deyeTotal = (key: "consumption" | "purchase") => stations.reduce((s, st) => s + (deye.get(st.id)?.[key] ?? 0), 0);
+    const outputKwh = sum(solar.map((d) => d.id)) + deyeTotal("consumption");
+    const inputKwh = sum(inputIds) + deyeTotal("purchase");
     solarResult = { outputKwh, inputKwh, ...solarSaving(kwh, inputKwh, outputKwh, t.tariff, charges) };
   }
 
-  const trackedSince = meterDevices.length ? new Date(Math.min(...meterDevices.map((d) => d.createdAt.getTime()))) : null;
+  const tracking = [...meterDevices, ...stations].map((x) => x.createdAt.getTime());
+  const trackedSince = tracking.length ? new Date(Math.min(...tracking)) : null;
   const firstTracked = trackedSince ? dhakaDay(trackedSince) : null;
   // Entered meter units fill the gap before tracking, so the cycle is complete.
   const partialFrom = adjustmentKwh === null && firstTracked && firstTracked > cycle.start ? firstTracked : null;
@@ -147,6 +189,7 @@ export async function meterBill(meter: Meter, cycle: Cycle, endOverride?: string
     trackedSince,
     adjustmentKwh,
     trackedKwh,
+    inverterGrid,
   };
 }
 
@@ -242,6 +285,12 @@ export async function finalizeBills(now = new Date()): Promise<number> {
 }
 
 async function hasUsage(meterId: string, cycle: Cycle) {
+  const [solar] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(schema.solarDaily)
+    .innerJoin(schema.solarStations, eq(schema.solarStations.id, schema.solarDaily.stationId))
+    .where(and(eq(schema.solarStations.meterId, meterId), between(schema.solarDaily.day, cycle.start, cycle.end)));
+  if ((solar?.n ?? 0) > 0) return true;
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(schema.dailyEnergy)
@@ -252,14 +301,15 @@ async function hasUsage(meterId: string, cycle: Cycle) {
 
 // ---------------------------------------------------------------- entered meter units
 
-/** kWh the meter's grid breakers recorded between two days (inclusive). */
+/** kWh the app recorded on a meter between two days (inclusive): grid breakers plus unmetered inverters. */
 async function trackedGridKwh(meterId: string, start: string, end: string) {
   const grid = await db
     .select({ id: schema.devices.id })
     .from(schema.devices)
     .where(and(eq(schema.devices.meterId, meterId), eq(schema.devices.source, "grid")));
   const usage = await deviceKwh(grid.map((d) => d.id), start, end);
-  return [...usage.values()].reduce((a, b) => a + b, 0);
+  const inverters = await inverterGridDraw(meterId, start, end);
+  return [...usage.values()].reduce((a, b) => a + b, 0) + inverters.reduce((a, b) => a + b.kwh, 0);
 }
 
 /** The current cycle's usage as the utility meter would show it: breakers plus entered units. */

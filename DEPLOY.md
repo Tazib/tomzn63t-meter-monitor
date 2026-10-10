@@ -59,10 +59,12 @@ Edit `/www/wwwroot/energy/.env` (aaPanel **Files** has an editor):
 | `TUYA_BASE_URL` | `https://openapi.tuyaeu.com` |
 | `TUYA_ACCESS_ID` / `TUYA_ACCESS_SECRET` | From the Tuya developer site → Cloud → your project → Overview |
 | `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | The first super admin login (password 8+ characters) |
+| **Optional:** `DEYE_APP_ID` / `DEYE_APP_SECRET` | Deye inverters: from developer.deyecloud.com → **Application** |
+| **Optional:** `DEYE_EMAIL` / `DEYE_PASSWORD` | The login you use on deyecloud.com / the Deye Cloud app |
 | **Docker only:** `POSTGRES_PASSWORD` | A strong password for the database (letters and digits only keep the URL simple) |
 | **PM2 only:** `DATABASE_URL` | `postgres://smarthome:<db password>@localhost:5432/smarthome` (set up in B1) |
 
-Keep this file private. It holds the Tuya secret.
+Keep this file private. It holds the Tuya secret (and the Deye login, if set).
 
 ---
 
@@ -196,6 +198,11 @@ aaPanel renews the Let's Encrypt certificate automatically.
 5. **Devices**: add each 63T breaker to its meter. For the solar breaker, pick type **Solar** and choose
    the grid breaker that feeds the inverter as its **Inverter input**. All of this can be changed later
    under the breaker's **Settings** on the Devices page.
+6. **Solar inverters (Deye)**: with the `DEYE_*` settings filled in, the Devices page lists the stations on
+   the Deye account. Link one, pick the meter it draws grid power through, and say whether a tracked breaker
+   already measures its grid input. If not, the app adds Deye's "bought from grid" figure to that meter. The
+   home page then gets a **Solar** tab, and savings work with no solar breaker at all. The poller loads the
+   last year of daily history on its next run.
 
 Usage counts from the moment a breaker is added. When adding a meter partway through a month, fill in
 **Units used this cycle so far** from the meter so the first bill is complete. For prepaid meters, open the

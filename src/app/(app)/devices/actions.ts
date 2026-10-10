@@ -8,6 +8,7 @@ import { assertProfileAccess, isSuperAdmin, requireUser } from "@/lib/session";
 import { errorMessage, type ActionResult } from "@/lib/action-result";
 import { listUserDevices } from "@/lib/tuya/client";
 import { hasEnergyCounter, parseStatus } from "@/lib/tuya/decode";
+import { listStations } from "@/lib/deye/client";
 
 /** Loads a tracked device and checks the user may manage its profile. */
 async function deviceForUser(user: { id: string; role?: string | null }, deviceId: string) {
@@ -192,4 +193,101 @@ export async function deleteDevice(_: ActionResult | null, formData: FormData): 
   }
   revalidatePath("/devices");
   return { ok: true, message: "Device and its readings deleted" };
+}
+
+// ---------------------------------------------------------------- Deye inverters
+
+/** Loads a linked station and checks the user may manage its profile. */
+async function stationForUser(user: { id: string; role?: string | null }, stationId: string) {
+  const [station] = await db.select().from(schema.solarStations).where(eq(schema.solarStations.id, stationId));
+  if (!station) throw new Error("Inverter not found");
+  await assertProfileAccess(user, station.profileId);
+  return station;
+}
+
+async function meterInProfile(profileId: string, meterId: string) {
+  const [meter] = await db
+    .select({ id: schema.meters.id })
+    .from(schema.meters)
+    .where(and(eq(schema.meters.id, meterId), eq(schema.meters.profileId, profileId)));
+  return !!meter;
+}
+
+const stationFields = {
+  name: z.string().trim().min(1, "Name is required"),
+  meterId: z.uuid("Pick a meter"),
+  gridDrawMetered: z.enum(["yes", "no"]).transform((v) => v === "yes"),
+};
+
+const addStationSchema = z.object({ profileId: z.uuid(), deyeStationId: z.string().min(1), ...stationFields });
+
+/** Links a Deye Cloud station to a profile. Super admin only: the Deye account is shared by the whole app. */
+export async function addStation(_: ActionResult | null, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  if (!isSuperAdmin(user)) return { ok: false, message: "Only the super admin can link inverters" };
+  const parsed = addStationSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0].message };
+  const { profileId, deyeStationId, name, meterId, gridDrawMetered } = parsed.data;
+
+  try {
+    if (!(await meterInProfile(profileId, meterId))) return { ok: false, message: "That meter is not in this profile" };
+    const station = (await listStations()).find((s) => s.id === deyeStationId);
+    if (!station) return { ok: false, message: "Station not found on the Deye account" };
+    const inserted = await db
+      .insert(schema.solarStations)
+      .values({ profileId, deyeStationId, name, meterId, gridDrawMetered })
+      .onConflictDoNothing({ target: schema.solarStations.deyeStationId })
+      .returning({ id: schema.solarStations.id });
+    if (inserted.length === 0) return { ok: false, message: "This inverter is already linked" };
+  } catch (e) {
+    return { ok: false, message: errorMessage(e) };
+  }
+  revalidatePath("/", "layout");
+  return { ok: true, message: `Linked ${name}. The poller loads its last year of history within 5 minutes.` };
+}
+
+const updateStationSchema = z.object({ stationId: z.uuid(), ...stationFields });
+
+export async function updateStation(_: ActionResult | null, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const parsed = updateStationSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0].message };
+  const { stationId, name, meterId, gridDrawMetered } = parsed.data;
+  try {
+    const station = await stationForUser(user, stationId);
+    if (!(await meterInProfile(station.profileId, meterId))) return { ok: false, message: "That meter is not in this profile" };
+    await db.update(schema.solarStations).set({ name, meterId, gridDrawMetered }).where(eq(schema.solarStations.id, stationId));
+  } catch (e) {
+    return { ok: false, message: errorMessage(e) };
+  }
+  revalidatePath("/", "layout");
+  return { ok: true, message: "Saved" };
+}
+
+export async function setStationActive(_: ActionResult | null, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const stationId = String(formData.get("stationId"));
+  const active = formData.get("active") === "true";
+  try {
+    await stationForUser(user, stationId);
+    await db.update(schema.solarStations).set({ active }).where(eq(schema.solarStations.id, stationId));
+  } catch (e) {
+    return { ok: false, message: errorMessage(e) };
+  }
+  revalidatePath("/devices");
+  return { ok: true, message: active ? "Reading resumed" : "Reading paused" };
+}
+
+export async function deleteStation(_: ActionResult | null, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  if (!isSuperAdmin(user)) return { ok: false, message: "Only the super admin can remove inverters" };
+  const stationId = String(formData.get("stationId"));
+  try {
+    await stationForUser(user, stationId);
+    await db.delete(schema.solarStations).where(eq(schema.solarStations.id, stationId));
+  } catch (e) {
+    return { ok: false, message: errorMessage(e) };
+  }
+  revalidatePath("/", "layout");
+  return { ok: true, message: "Inverter and its data removed" };
 }

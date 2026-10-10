@@ -309,3 +309,71 @@ export const bills = pgTable(
   },
   (t) => [uniqueIndex("bills_meter_period_uq").on(t.meterId, t.periodStart)],
 );
+
+// ---------------------------------------------------------------------------
+// Solar inverters read from Deye Cloud (no breakers needed)
+// ---------------------------------------------------------------------------
+
+export const solarStations = pgTable(
+  "solar_stations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    profileId: uuid("profile_id")
+      .notNull()
+      .references(() => profiles.id, { onDelete: "cascade" }),
+    // Station (plant) id on Deye Cloud.
+    deyeStationId: text("deye_station_id").notNull(),
+    name: text("name").notNull(),
+    // The meter whose tariff values the savings, and that the inverter draws grid power through.
+    meterId: uuid("meter_id")
+      .notNull()
+      .references(() => meters.id, { onDelete: "restrict" }),
+    // True when a tracked breaker already measures what the inverter draws from the grid. False adds
+    // Deye's "bought from grid" figure to the meter's usage, so the bill includes it.
+    gridDrawMetered: boolean("grid_draw_metered").notNull().default(true),
+    active: boolean("active").notNull().default(true),
+    // Poller state
+    backfilledAt: timestamp("backfilled_at", { withTimezone: true }),
+    dailySyncedAt: timestamp("daily_synced_at", { withTimezone: true }),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("solar_stations_deye_uq").on(t.deyeStationId), index("solar_stations_meter_idx").on(t.meterId)],
+);
+
+// Power snapshots, one per Deye upload (about every 5 minutes).
+export const solarReadings = pgTable(
+  "solar_readings",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    stationId: uuid("station_id")
+      .notNull()
+      .references(() => solarStations.id, { onDelete: "cascade" }),
+    ts: timestamp("ts", { withTimezone: true }).notNull(),
+    generationW: doublePrecision("generation_w"),
+    consumptionW: doublePrecision("consumption_w"),
+    gridW: doublePrecision("grid_w"), // + buying, − selling
+    batteryW: doublePrecision("battery_w"), // + discharging, − charging
+    batterySoc: doublePrecision("battery_soc"),
+  },
+  (t) => [uniqueIndex("solar_readings_station_ts_uq").on(t.stationId, t.ts)],
+);
+
+// Deye's own daily totals (kWh, station's local day).
+export const solarDaily = pgTable(
+  "solar_daily",
+  {
+    stationId: uuid("station_id")
+      .notNull()
+      .references(() => solarStations.id, { onDelete: "cascade" }),
+    day: date("day").notNull(),
+    generationKwh: numeric("generation_kwh", { precision: 12, scale: 3 }).notNull().default("0"),
+    consumptionKwh: numeric("consumption_kwh", { precision: 12, scale: 3 }).notNull().default("0"),
+    purchaseKwh: numeric("purchase_kwh", { precision: 12, scale: 3 }).notNull().default("0"),
+    exportKwh: numeric("export_kwh", { precision: 12, scale: 3 }).notNull().default("0"),
+    chargeKwh: numeric("charge_kwh", { precision: 12, scale: 3 }).notNull().default("0"),
+    dischargeKwh: numeric("discharge_kwh", { precision: 12, scale: 3 }).notNull().default("0"),
+  },
+  (t) => [primaryKey({ columns: [t.stationId, t.day] })],
+);

@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { requireUser, accessibleProfiles } from "@/lib/session";
-import { buildView, meterLabel, profileDashboard } from "@/lib/dashboard-data";
+import { buildView, meterLabel, profileDashboard, solarDashboard } from "@/lib/dashboard-data";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { SegmentedTabs } from "@/components/segmented-tabs";
 import { DashboardView, Panel } from "@/components/dashboard/dashboard-view";
+import { SolarView } from "@/components/dashboard/solar-view";
 
 // Per-user data from the database on every request (see the (app) layout).
 export const instant = false;
@@ -20,14 +21,20 @@ export default async function DashboardPage() {
       </Panel>
     );
   }
-  if (meters.length === 0 || meters.every((m) => m.devices.length === 0)) {
+  if (meters.length === 0 || meters.every((m) => m.devices.length === 0 && !m.hasSolar)) {
     return <GettingStarted hasMeter={meters.length > 0} />;
   }
 
   const overview = buildView("all", meters.length > 1 ? "All meters" : meterLabel(meters[0].meter), meters);
   const perMeter = meters.map((m) => buildView(m.meter.id, meterLabel(m.meter), [m]));
 
+  const solar = await solarDashboard(meters);
+
   const views = [overview, ...(meters.length > 1 ? perMeter : [])];
+  const tabs = [
+    ...views.map((v) => ({ key: v.key, label: v.title, panel: <DashboardView key={v.key} view={v} /> })),
+    ...(solar ? [{ key: "solar", label: "Solar", panel: <SolarView key="solar" view={solar} /> }] : []),
+  ];
   const subtitle = [profiles.length === 1 ? profiles[0].name : null, `${meters.length} meter${meters.length === 1 ? "" : "s"}`]
     .filter(Boolean)
     .join(" · ");
@@ -42,15 +49,9 @@ export default async function DashboardPage() {
         <span className="text-sm text-muted-foreground">{subtitle}</span>
       </div>
 
-      {views.length > 1 ? (
-        // One view at a time: all meters combined, or a single meter. Never both on screen.
-        <SegmentedTabs
-          label="Show"
-          tabs={views.map((v) => ({ key: v.key, label: v.title }))}
-          panels={views.map((v) => (
-            <DashboardView key={v.key} view={v} />
-          ))}
-        />
+      {tabs.length > 1 ? (
+        // One view at a time: all meters combined, a single meter, or solar. Never both on screen.
+        <SegmentedTabs label="Show" tabs={tabs.map((t) => ({ key: t.key, label: t.label }))} panels={tabs.map((t) => t.panel)} />
       ) : (
         <DashboardView view={overview} />
       )}

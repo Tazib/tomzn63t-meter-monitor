@@ -1,7 +1,8 @@
 # Energy Tracker
 
 Tracks electricity use from TOMZN TOVA 63T breakers through Tuya Cloud, works out monthly bills on
-Bangladesh slab tariffs, and shows how much the solar inverter saves. Read-only towards the devices.
+Bangladesh slab tariffs, and shows how much the solar inverter saves (from a solar breaker, or straight
+from Deye Cloud for Deye inverters). Read-only towards the devices.
 
 Design decisions and the data model are in [PLAN.md](PLAN.md). Server setup is in [DEPLOY.md](DEPLOY.md).
 
@@ -37,6 +38,8 @@ npm run poller           # in a second terminal: reads the breakers every minute
 | Path | |
 |---|---|
 | `src/lib/tuya/` | Tuya Cloud client (signing, token, batch status) and data-point decoding |
+| `src/lib/deye/` | Deye Cloud client (token, stations, latest, daily history) and payload decoding |
+| `src/lib/solar-poll.ts` | Deye snapshots every 5 min, daily totals, one-time year backfill |
 | `src/lib/energy.ts` | Counter deltas, reset handling, Dhaka day boundaries |
 | `src/lib/poll.ts` | One poll cycle; `scripts/poller.ts` runs it on a timer |
 | `src/lib/billing.ts` | Slab/lifeline bill maths, next price step, billing cycles (pure) |

@@ -1,8 +1,17 @@
 import "server-only";
-import { and, between, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, between, desc, eq, gte, inArray, sql, type AnyColumn } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { addDays, allocateCost, nextPriceStep, type CostShare, type Tariff } from "@/lib/billing";
-import { currentCycleBill, deviceKwh, meterCharges, prepaidBalance, tariffFor, type PrepaidBalance, type Projection } from "@/lib/billing-data";
+import {
+  currentCycleBill,
+  deviceKwh,
+  meterCharges,
+  prepaidBalance,
+  stationKwh,
+  tariffFor,
+  type PrepaidBalance,
+  type Projection,
+} from "@/lib/billing-data";
 import { dhakaDay } from "@/lib/energy";
 
 type Device = typeof schema.devices.$inferSelect;
@@ -11,6 +20,8 @@ type Reading = typeof schema.readings.$inferSelect;
 
 // A reading older than this is not "live".
 const LIVE_WINDOW_MS = 5 * 60_000;
+// Deye loggers upload every ~5 minutes and the poller asks every 5, so allow more slack.
+const SOLAR_LIVE_WINDOW_MS = 15 * 60_000;
 const BUCKET_SECONDS = 300;
 
 export type DayPoint = { day: string; grid: number; solar: number };
@@ -21,6 +32,8 @@ export type MeterDashboard = {
   devices: (Device & { live: Reading | null; todayKwh: number })[];
   liveGridW: number | null;
   liveSolarW: number | null;
+  lastSolarAt: number | null;
+  hasSolar: boolean;
   todayGridKwh: number;
   todaySolarKwh: number;
   cycle: Projection | null;
@@ -43,6 +56,11 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
     .where(inArray(schema.devices.meterId, meters.map((m) => m.id)))
     .orderBy(schema.devices.name);
   const ids = devices.map((d) => d.id);
+  const stations = await db
+    .select()
+    .from(schema.solarStations)
+    .where(inArray(schema.solarStations.meterId, meters.map((m) => m.id)));
+  const stationIds = stations.map((s) => s.id);
 
   const today = dhakaDay(now);
   const dayStart = new Date(`${today}T00:00:00+06:00`);
@@ -81,6 +99,8 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
       ])
     : [[], [], [], []];
 
+  const solar = stationIds.length ? await solarSeries(stationIds, now) : null;
+
   return Promise.all(
     meters.map(async (meter) => {
       const own = devices.filter((d) => d.meterId === meter.id);
@@ -100,14 +120,24 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
         return rows.length ? rows.reduce((s, d) => s + d.live!.powerW!, 0) : null;
       };
 
+      // Deye inverters: solar = panel output; grid = what an unmetered inverter buys (no breaker sees it).
+      const ownStations = stations.filter((s) => s.meterId === meter.id);
+      const isStation = new Set(ownStations.map((s) => s.id));
+      const unmetered = new Set(ownStations.filter((s) => !s.gridDrawMetered).map((s) => s.id));
+      const stationLive = (solar?.latest ?? []).filter((r) => isStation.has(r.stationId) && now.getTime() - r.ts.getTime() < SOLAR_LIVE_WINDOW_MS);
+      const deyeDay = (day: string, set: Set<string>, key: "generation" | "purchase") =>
+        (solar?.daily ?? []).filter((x) => x.day === day && set.has(x.stationId)).reduce((s, x) => s + x[key], 0);
+      const deyeMonth = (month: string, set: Set<string>, key: "generation" | "purchase") =>
+        (solar?.monthly ?? []).filter((x) => x.month === month && set.has(x.stationId)).reduce((s, x) => s + x[key], 0);
+
       // Daily series, every day present even when zero.
       const dailyPoints: DayPoint[] = [];
       for (let day = from30; day <= today; day = addDays(day, 1)) {
         const rows = daily.filter((x) => x.day === day && ownIds.has(x.deviceId));
         dailyPoints.push({
           day,
-          grid: round(rows.filter((x) => isGrid.has(x.deviceId)).reduce((s, x) => s + Number(x.kwh), 0)),
-          solar: round(rows.filter((x) => isSolar.has(x.deviceId)).reduce((s, x) => s + Number(x.kwh), 0)),
+          grid: round(rows.filter((x) => isGrid.has(x.deviceId)).reduce((s, x) => s + Number(x.kwh), 0) + deyeDay(day, unmetered, "purchase")),
+          solar: round(rows.filter((x) => isSolar.has(x.deviceId)).reduce((s, x) => s + Number(x.kwh), 0) + deyeDay(day, isStation, "generation")),
         });
       }
 
@@ -116,8 +146,8 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
         const rows = monthly.filter((x) => x.month === m && ownIds.has(x.deviceId));
         months.push({
           month: m,
-          grid: round(rows.filter((x) => isGrid.has(x.deviceId)).reduce((s, x) => s + Number(x.kwh), 0)),
-          solar: round(rows.filter((x) => isSolar.has(x.deviceId)).reduce((s, x) => s + Number(x.kwh), 0)),
+          grid: round(rows.filter((x) => isGrid.has(x.deviceId)).reduce((s, x) => s + Number(x.kwh), 0) + deyeMonth(m, unmetered, "purchase")),
+          solar: round(rows.filter((x) => isSolar.has(x.deviceId)).reduce((s, x) => s + Number(x.kwh), 0) + deyeMonth(m, isStation, "generation")),
         });
       }
 
@@ -130,6 +160,13 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
         if (isGrid.has(r.deviceId)) b.grid = (b.grid ?? 0) + Number(r.powerW);
         if (isSolar.has(r.deviceId)) b.solar = (b.solar ?? 0) + Number(r.powerW);
         buckets.set(key, b);
+      }
+      for (const r of solar?.power ?? []) {
+        if (!isStation.has(r.stationId)) continue;
+        const b = buckets.get(r.ts) ?? { grid: null, solar: null };
+        if (r.generationW !== null) b.solar = (b.solar ?? 0) + r.generationW;
+        if (unmetered.has(r.stationId) && r.gridW !== null) b.grid = (b.grid ?? 0) + Math.max(r.gridW, 0);
+        buckets.set(r.ts, b);
       }
       const powerPoints = [...buckets.entries()]
         .sort((a, b) => a[0] - b[0])
@@ -144,6 +181,7 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
         const used = await deviceKwh(gridDevices.map((d) => d.id), cycle.cycle.start, today);
         costs = allocateCost(cycle.bill, t.tariff, meterCharges(meter), [
           ...gridDevices.map((d) => ({ key: d.id, label: d.name, kwh: used.get(d.id) ?? 0 })),
+          ...cycle.inverterGrid.map((x) => ({ key: `inverter-${x.stationId}`, label: `${x.name} (from grid)`, kwh: x.kwh })),
           ...(cycle.adjustmentKwh ? [{ key: `before-${meter.id}`, label: "Before tracking (entered)", kwh: cycle.adjustmentKwh }] : []),
         ]);
       }
@@ -152,10 +190,15 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
       return {
         meter,
         devices: withLive,
-        liveGridW: livePower(isGrid),
-        liveSolarW: livePower(isSolar),
-        todayGridKwh: round(withLive.filter((d) => isGrid.has(d.id)).reduce((s, d) => s + d.todayKwh, 0)),
-        todaySolarKwh: round(withLive.filter((d) => isSolar.has(d.id)).reduce((s, d) => s + d.todayKwh, 0)),
+        liveGridW: sumNullable([
+          livePower(isGrid),
+          sumNullable(stationLive.filter((r) => unmetered.has(r.stationId)).map((r) => (r.gridW === null ? null : Math.max(r.gridW, 0)))),
+        ]),
+        liveSolarW: sumNullable([livePower(isSolar), sumNullable(stationLive.map((r) => r.generationW))]),
+        lastSolarAt: stationLive.reduce<number | null>((t, r) => Math.max(t ?? 0, r.ts.getTime()), null),
+        hasSolar: isSolar.size > 0 || isStation.size > 0,
+        todayGridKwh: round(withLive.filter((d) => isGrid.has(d.id)).reduce((s, d) => s + d.todayKwh, 0) + deyeDay(today, unmetered, "purchase")),
+        todaySolarKwh: round(withLive.filter((d) => isSolar.has(d.id)).reduce((s, d) => s + d.todayKwh, 0) + deyeDay(today, isStation, "generation")),
         cycle,
         tariff: t?.tariff ?? null,
         nextStep: cycle && t ? nextPriceStep(cycle.kwh, t.tariff) : null,
@@ -171,6 +214,207 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
 
 function round(n: number) {
   return Math.round(n * 100) / 100;
+}
+
+// ---------------------------------------------------------------- Deye inverters
+
+type SolarReading = typeof schema.solarReadings.$inferSelect;
+type SolarBucket = { stationId: string; ts: number } & Record<"generationW" | "consumptionW" | "gridW" | "batteryW" | "batterySoc", number | null>;
+type SolarDayRow = { stationId: string; day: string } & Record<"generation" | "consumption" | "purchase" | "export" | "charge" | "discharge", number>;
+
+/** Latest snapshot, today's 5-minute power, 30 days and 12 months of Deye totals for some stations. */
+async function solarSeries(stationIds: string[], now: Date) {
+  const today = dhakaDay(now);
+  const dayStart = new Date(`${today}T00:00:00+06:00`);
+  const from30 = addDays(today, -29);
+  const from12m = `${addDays(`${today.slice(0, 7)}-01`, -320).slice(0, 7)}-01`;
+  const r = schema.solarReadings;
+  const d = schema.solarDaily;
+  const bucket = sql<number>`(floor(extract(epoch from ${r.ts}) / ${sql.raw(String(BUCKET_SECONDS))}) * ${sql.raw(String(BUCKET_SECONDS))})::bigint`;
+  const sumOf = (c: AnyColumn) => sql<string>`sum(${c})`;
+
+  const [latest, power, daily, monthly] = await Promise.all([
+    db
+      .selectDistinctOn([r.stationId])
+      .from(r)
+      .where(and(inArray(r.stationId, stationIds), gte(r.ts, new Date(now.getTime() - 86_400_000))))
+      .orderBy(r.stationId, desc(r.ts)),
+    db
+      .select({
+        stationId: r.stationId,
+        bucket,
+        generationW: sql<number | null>`avg(${r.generationW})`,
+        consumptionW: sql<number | null>`avg(${r.consumptionW})`,
+        gridW: sql<number | null>`avg(${r.gridW})`,
+        batteryW: sql<number | null>`avg(${r.batteryW})`,
+        batterySoc: sql<number | null>`avg(${r.batterySoc})`,
+      })
+      .from(r)
+      .where(and(inArray(r.stationId, stationIds), gte(r.ts, dayStart)))
+      .groupBy(r.stationId, sql`2`),
+    db.select().from(d).where(and(inArray(d.stationId, stationIds), between(d.day, from30, today))),
+    db
+      .select({
+        stationId: d.stationId,
+        month: sql<string>`to_char(${d.day}, 'YYYY-MM')`,
+        generation: sumOf(d.generationKwh),
+        consumption: sumOf(d.consumptionKwh),
+        purchase: sumOf(d.purchaseKwh),
+        export: sumOf(d.exportKwh),
+      })
+      .from(d)
+      .where(and(inArray(d.stationId, stationIds), gte(d.day, from12m)))
+      .groupBy(d.stationId, sql`2`),
+  ]);
+
+  const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+  return {
+    today,
+    from30,
+    from12m,
+    latest: latest as SolarReading[],
+    power: power.map(
+      (p): SolarBucket => ({
+        stationId: p.stationId,
+        ts: Number(p.bucket) * 1000,
+        generationW: n(p.generationW),
+        consumptionW: n(p.consumptionW),
+        gridW: n(p.gridW),
+        batteryW: n(p.batteryW),
+        batterySoc: n(p.batterySoc),
+      }),
+    ),
+    daily: daily.map(
+      (x): SolarDayRow => ({
+        stationId: x.stationId,
+        day: x.day,
+        generation: Number(x.generationKwh),
+        consumption: Number(x.consumptionKwh),
+        purchase: Number(x.purchaseKwh),
+        export: Number(x.exportKwh),
+        charge: Number(x.chargeKwh),
+        discharge: Number(x.dischargeKwh),
+      }),
+    ),
+    monthly: monthly.map((x) => ({
+      stationId: x.stationId,
+      month: x.month,
+      generation: Number(x.generation),
+      consumption: Number(x.consumption),
+      purchase: Number(x.purchase),
+      export: Number(x.export),
+    })),
+  };
+}
+
+export type SolarTotals = { generation: number; consumption: number; purchase: number; export: number };
+
+export type SolarView = {
+  stations: { id: string; name: string; meterLabel: string; lastSeenAt: Date | null; lastError: string | null; active: boolean }[];
+  /** Summed over stations with a recent snapshot; null when none is recent. */
+  live: { ts: number; generationW: number | null; consumptionW: number | null; gridW: number | null; batteryW: number | null; batterySoc: number | null } | null;
+  today: SolarTotals & { charge: number; discharge: number };
+  cycle: (SolarTotals & { saving: number; billWithSolar: number; billWithoutSolar: number; start: string; end: string; daysElapsed: number; daysInCycle: number }) | null;
+  /** Grid = bought from the grid, solar = panel output. */
+  power: PowerPoint[];
+  daily: DayPoint[];
+  monthly: MonthPoint[];
+  hasBattery: boolean;
+};
+
+/** Everything the Solar tab shows, for the stations under these meters. Null when none are linked. */
+export async function solarDashboard(meters: MeterDashboard[], now = new Date()): Promise<SolarView | null> {
+  if (meters.length === 0) return null;
+  const stations = await db
+    .select()
+    .from(schema.solarStations)
+    .where(inArray(schema.solarStations.meterId, meters.map((m) => m.meter.id)))
+    .orderBy(schema.solarStations.name);
+  if (stations.length === 0) return null;
+  const ids = stations.map((s) => s.id);
+  const series = await solarSeries(ids, now);
+
+  const recent = series.latest.filter((r) => now.getTime() - r.ts.getTime() < SOLAR_LIVE_WINDOW_MS);
+  const sum = (key: "generationW" | "consumptionW" | "gridW" | "batteryW") => sumNullable(recent.map((r) => r[key]));
+  const socs = recent.map((r) => r.batterySoc).filter((v): v is number => v !== null);
+
+  const dayTotals = series.daily.filter((x) => x.day === series.today);
+  const total = <K extends keyof SolarDayRow>(rows: SolarDayRow[], key: K) => round(rows.reduce((s, x) => s + Number(x[key]), 0));
+
+  // The cycle comes from each reference meter; savings are already worked out in its bill.
+  const withStations = meters.filter((m) => stations.some((s) => s.meterId === m.meter.id) && m.cycle);
+  let cycle: SolarView["cycle"] = null;
+  if (withStations.length) {
+    const totals = await Promise.all(
+      withStations.map((m) =>
+        stationKwh(stations.filter((s) => s.meterId === m.meter.id).map((s) => s.id), m.cycle!.cycle.start, series.today),
+      ),
+    );
+    const add = (key: keyof SolarTotals) => round(totals.reduce((s, t) => s + [...t.values()].reduce((a, v) => a + v[key], 0), 0));
+    const first = withStations[0].cycle!;
+    cycle = {
+      generation: add("generation"),
+      consumption: add("consumption"),
+      purchase: add("purchase"),
+      export: add("export"),
+      saving: round(withStations.reduce((s, m) => s + (m.cycle!.solar?.saving ?? 0), 0)),
+      billWithSolar: round(withStations.reduce((s, m) => s + m.cycle!.bill.total, 0)),
+      billWithoutSolar: round(withStations.reduce((s, m) => s + (m.cycle!.solar?.billWithoutSolar.total ?? m.cycle!.bill.total), 0)),
+      start: first.cycle.start,
+      end: first.cycle.end,
+      daysElapsed: first.daysElapsed,
+      daysInCycle: first.daysInCycle,
+    };
+  }
+
+  const power = new Map<number, PowerPoint>();
+  for (const p of series.power) {
+    const b = power.get(p.ts) ?? { ts: p.ts, grid: null, solar: null };
+    if (p.generationW !== null) b.solar = Math.round((b.solar ?? 0) + p.generationW);
+    if (p.gridW !== null) b.grid = Math.round((b.grid ?? 0) + Math.max(p.gridW, 0));
+    power.set(p.ts, b);
+  }
+
+  const daily: DayPoint[] = [];
+  for (let day = series.from30; day <= series.today; day = addDays(day, 1)) {
+    const rows = series.daily.filter((x) => x.day === day);
+    daily.push({ day, grid: total(rows, "purchase"), solar: total(rows, "generation") });
+  }
+  const monthly: MonthPoint[] = [];
+  for (let m = series.from12m.slice(0, 7); m <= series.today.slice(0, 7); m = addDays(`${m}-28`, 7).slice(0, 7)) {
+    const rows = series.monthly.filter((x) => x.month === m);
+    monthly.push({ month: m, grid: round(rows.reduce((s, x) => s + x.purchase, 0)), solar: round(rows.reduce((s, x) => s + x.generation, 0)) });
+  }
+
+  return {
+    stations: stations.map((s) => {
+      const m = meters.find((x) => x.meter.id === s.meterId)!;
+      return { id: s.id, name: s.name, meterLabel: meterLabel(m.meter), lastSeenAt: s.lastSeenAt, lastError: s.lastError, active: s.active };
+    }),
+    live: recent.length
+      ? {
+          ts: Math.max(...recent.map((r) => r.ts.getTime())),
+          generationW: sum("generationW"),
+          consumptionW: sum("consumptionW"),
+          gridW: sum("gridW"),
+          batteryW: sum("batteryW"),
+          batterySoc: socs.length ? socs.reduce((a, b) => a + b, 0) / socs.length : null,
+        }
+      : null,
+    today: {
+      generation: total(dayTotals, "generation"),
+      consumption: total(dayTotals, "consumption"),
+      purchase: total(dayTotals, "purchase"),
+      export: total(dayTotals, "export"),
+      charge: total(dayTotals, "charge"),
+      discharge: total(dayTotals, "discharge"),
+    },
+    cycle,
+    power: [...power.values()].sort((a, b) => a.ts - b.ts),
+    daily,
+    monthly,
+    hasBattery: socs.length > 0 || series.daily.some((x) => x.charge + x.discharge > 0),
+  };
 }
 
 // ---------------------------------------------------------------- views
@@ -273,10 +517,10 @@ export function buildView(key: string, title: string, meters: MeterDashboard[]):
   };
 
   const devices = meters.flatMap((m) => m.devices.map((d) => ({ ...d, meterLabel: meterLabel(m.meter) })));
-  const lastReadingAt = devices.reduce<number | null>((t, d) => {
-    const ts = d.live?.ts.getTime() ?? null;
-    return ts !== null && (t === null || ts > t) ? ts : t;
-  }, null);
+  const lastReadingAt = [...devices.map((d) => d.live?.ts.getTime() ?? null), ...meters.map((m) => m.lastSolarAt)].reduce<number | null>(
+    (t, ts) => (ts !== null && (t === null || ts > t) ? ts : t),
+    null,
+  );
 
   const first = cycles[0];
   return {
@@ -295,7 +539,7 @@ export function buildView(key: string, title: string, meters: MeterDashboard[]):
     projectedKwh: round(cycles.reduce((s, c) => s + c.projectedKwh, 0)),
     solarCycleKwh: round(cycles.reduce((s, c) => s + (c.solar?.outputKwh ?? 0), 0)),
     solarSaving: round(cycles.reduce((s, c) => s + (c.solar?.saving ?? 0), 0)),
-    hasSolar: devices.some((d) => d.source === "solar"),
+    hasSolar: meters.some((m) => m.hasSolar),
     hasCycle: cycles.length > 0,
     cycleProgress:
       sameCycle && first
