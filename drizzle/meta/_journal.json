@@ -29,6 +29,13 @@
       "when": 1791638146850,
       "tag": "0003_solar_stations",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791639130680,
+      "tag": "0004_deye_accounts",
+      "breakpoints": true
     }
   ]
 }

@@ -14,7 +14,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { deyeConfigured, listStations, type DeyeStation } from "@/lib/deye/client";
-import { addDevice, addStation, deleteDevice, deleteStation, setDeviceActive, setStationActive, updateDevice, updateStation } from "./actions";
+import { profileDeyeAccount } from "@/lib/deye/accounts";
+import {
+  addDevice,
+  addStation,
+  connectDeye,
+  deleteDevice,
+  deleteStation,
+  disconnectDeye,
+  setDeviceActive,
+  setStationActive,
+  updateDevice,
+  updateStation,
+} from "./actions";
 
 type Meter = typeof schema.meters.$inferSelect;
 type Device = typeof schema.devices.$inferSelect;
@@ -42,16 +54,6 @@ export default async function DevicesPage() {
       ])
     : [[], [], []];
 
-  // The Deye account is shared by the whole app, so only the super admin sees its station list.
-  let deyeStations: DeyeStation[] = [];
-  let deyeError: string | null = null;
-  if (admin && deyeConfigured()) {
-    try {
-      deyeStations = await listStations();
-    } catch (e) {
-      deyeError = errorMessage(e);
-    }
-  }
 
   return (
     <div className="grid gap-6">
@@ -82,8 +84,7 @@ export default async function DevicesPage() {
           profile={p}
           meters={meters.filter((m) => m.profileId === p.id)}
           stations={stations.filter((s) => s.profileId === p.id)}
-          linkable={deyeStations.filter((d) => !stations.some((s) => s.deyeStationId === d.id))}
-          deyeError={deyeError}
+          linkedIds={new Set(stations.map((s) => s.deyeStationId))}
           admin={admin}
         />
       ))}
@@ -302,7 +303,7 @@ function PlacementFields({
         <Label htmlFor={id("source")}>Type</Label>
         <NativeSelect id={id("source")} name="source" defaultValue={source}>
           <option value="grid">Grid (under a meter)</option>
-          <option value="solar">Solar (inverter output)</option>
+          <option value="solar">Solar (inverter output, non-Deye)</option>
         </NativeSelect>
       </div>
       <div className="grid gap-2">
@@ -331,24 +332,31 @@ function PlacementFields({
   );
 }
 
-/** Deye inverters read from Deye Cloud: no breaker needed for solar figures. */
-function ProfileInverters({
+/** Deye inverters read from Deye Cloud with the profile's own login: no breaker needed for solar figures. */
+async function ProfileInverters({
   profile,
   meters,
   stations,
-  linkable,
-  deyeError,
+  linkedIds,
   admin,
 }: {
-  profile: { id: string; name: string };
+  profile: { id: string; name: string; deyeEmail: string | null };
   meters: Meter[];
   stations: Station[];
-  linkable: DeyeStation[];
-  deyeError: string | null;
+  linkedIds: Set<string>;
   admin: boolean;
 }) {
-  if (!admin && stations.length === 0) return null;
   const configured = deyeConfigured();
+  let linkable: DeyeStation[] = [];
+  let deyeError: string | null = null;
+  const account = configured ? await profileDeyeAccount(profile.id) : null;
+  if (account) {
+    try {
+      linkable = (await listStations(account)).filter((d) => !linkedIds.has(d.id));
+    } catch (e) {
+      deyeError = errorMessage(e);
+    }
+  }
 
   return (
     <Card>
@@ -418,52 +426,93 @@ function ProfileInverters({
           </section>
         )}
 
-        {admin && (
-          <section className="grid gap-3">
-            <h3 className="text-sm font-medium">Link an inverter</h3>
-            {!configured ? (
-              <p className="text-sm text-muted-foreground">
-                Add DEYE_APP_ID, DEYE_APP_SECRET, DEYE_EMAIL and DEYE_PASSWORD to the server&apos;s .env (see .env.example), then restart.
-              </p>
-            ) : deyeError ? (
-              <Alert variant="destructive">
-                <AlertTitle>Couldn&apos;t reach Deye Cloud</AlertTitle>
-                <AlertDescription>{deyeError}</AlertDescription>
-              </Alert>
-            ) : meters.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Add a meter to this profile first. Savings are priced on its tariff.</p>
-            ) : linkable.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Every station on the Deye account is already linked.</p>
-            ) : (
-              linkable.map((d) => (
-                <ActionForm
-                  key={d.id}
-                  action={addStation}
-                  className="grid gap-4 rounded-xl bg-muted/60 p-4 sm:grid-cols-2 lg:grid-cols-3 lg:items-end"
-                >
+        {!configured ? (
+          <p className="text-sm text-muted-foreground">
+            {admin
+              ? "Add DEYE_APP_ID and DEYE_APP_SECRET (from developer.deyecloud.com) to the server's .env, then restart."
+              : "Deye inverters aren't set up on this server yet. Ask the super admin."}
+          </p>
+        ) : (
+          <>
+            <section className="grid gap-3">
+              <h3 className="text-sm font-medium">Deye account</h3>
+              {profile.deyeEmail ? (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm text-muted-foreground">
+                    Connected as <span className="font-medium text-foreground">{profile.deyeEmail}</span>
+                  </p>
+                  <ActionForm action={disconnectDeye}>
+                    <input type="hidden" name="profileId" value={profile.id} />
+                    <SubmitButton variant="outline" size="sm">
+                      Disconnect
+                    </SubmitButton>
+                  </ActionForm>
+                </div>
+              ) : (
+                <ActionForm action={connectDeye} className="grid gap-4 rounded-xl bg-muted/60 p-4 sm:grid-cols-2 lg:grid-cols-3 lg:items-end">
                   <input type="hidden" name="profileId" value={profile.id} />
-                  <input type="hidden" name="deyeStationId" value={d.id} />
-                  <div className="text-sm sm:col-span-2 lg:col-span-3">
-                    <span className="font-medium">{d.name}</span>{" "}
-                    <span className="text-muted-foreground tabular-nums">
-                      · station {d.id}
-                      {d.installedCapacity ? ` · ${d.installedCapacity} kWp` : ""}
-                    </span>
+                  <p className="text-sm text-muted-foreground sm:col-span-2 lg:col-span-3">
+                    The login you use in the Deye Cloud app. It is checked with Deye, and the password itself is never stored.
+                  </p>
+                  <div className="grid gap-2">
+                    <Label htmlFor={`${profile.id}-deye-email`}>Email</Label>
+                    <Input id={`${profile.id}-deye-email`} name="email" type="email" autoComplete="off" required />
                   </div>
-                  <StationFields
-                    idPrefix={d.id}
-                    name={d.name}
-                    meterId={meters.length === 1 ? meters[0].id : ""}
-                    gridDrawMetered={false}
-                    meters={meters}
-                  />
-                  <div className="sm:col-span-2 lg:col-span-3">
-                    <SubmitButton>Link this inverter</SubmitButton>
+                  <div className="grid gap-2">
+                    <Label htmlFor={`${profile.id}-deye-password`}>Password</Label>
+                    <Input id={`${profile.id}-deye-password`} name="password" type="password" autoComplete="new-password" required />
+                  </div>
+                  <div>
+                    <SubmitButton>Connect</SubmitButton>
                   </div>
                 </ActionForm>
-              ))
+              )}
+            </section>
+
+            {profile.deyeEmail && (
+              <section className="grid gap-3">
+                <h3 className="text-sm font-medium">Link an inverter</h3>
+                {deyeError ? (
+                  <Alert variant="destructive">
+                    <AlertTitle>Couldn&apos;t reach Deye Cloud</AlertTitle>
+                    <AlertDescription>{deyeError}</AlertDescription>
+                  </Alert>
+                ) : meters.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Add a meter to this profile first. Savings are priced on its tariff.</p>
+                ) : linkable.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Every station on this Deye account is already linked.</p>
+                ) : (
+                  linkable.map((d) => (
+                    <ActionForm
+                      key={d.id}
+                      action={addStation}
+                      className="grid gap-4 rounded-xl bg-muted/60 p-4 sm:grid-cols-2 lg:grid-cols-3 lg:items-end"
+                    >
+                      <input type="hidden" name="profileId" value={profile.id} />
+                      <input type="hidden" name="deyeStationId" value={d.id} />
+                      <div className="text-sm sm:col-span-2 lg:col-span-3">
+                        <span className="font-medium">{d.name}</span>{" "}
+                        <span className="text-muted-foreground tabular-nums">
+                          · station {d.id}
+                          {d.installedCapacity ? ` · ${d.installedCapacity} kWp` : ""}
+                        </span>
+                      </div>
+                      <StationFields
+                        idPrefix={d.id}
+                        name={d.name}
+                        meterId={meters.length === 1 ? meters[0].id : ""}
+                        gridDrawMetered={null}
+                        meters={meters}
+                      />
+                      <div className="sm:col-span-2 lg:col-span-3">
+                        <SubmitButton>Link this inverter</SubmitButton>
+                      </div>
+                    </ActionForm>
+                  ))
+                )}
+              </section>
             )}
-          </section>
+          </>
         )}
       </CardContent>
     </Card>
@@ -480,10 +529,11 @@ function StationFields({
   idPrefix: string;
   name: string;
   meterId: string;
-  gridDrawMetered: boolean;
+  gridDrawMetered: boolean | null;
   meters: Meter[];
 }) {
   const id = (field: string) => `${idPrefix}-${field}`;
+  const metered = gridDrawMetered === null ? "" : gridDrawMetered ? "yes" : "no";
   return (
     <>
       <div className="grid gap-2">
@@ -503,7 +553,8 @@ function StationFields({
       </div>
       <div className="grid gap-2">
         <Label htmlFor={id("metered")}>Is its grid input on a tracked breaker?</Label>
-        <NativeSelect id={id("metered")} name="gridDrawMetered" defaultValue={gridDrawMetered ? "yes" : "no"}>
+        <NativeSelect id={id("metered")} name="gridDrawMetered" defaultValue={metered}>
+          {!metered && <option value="">Pick one…</option>}
           <option value="no">No: add Deye&apos;s grid figure to the meter</option>
           <option value="yes">Yes: a breaker already counts it</option>
         </NativeSelect>

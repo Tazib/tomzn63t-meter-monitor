@@ -8,7 +8,8 @@ import { assertProfileAccess, isSuperAdmin, requireUser } from "@/lib/session";
 import { errorMessage, type ActionResult } from "@/lib/action-result";
 import { listUserDevices } from "@/lib/tuya/client";
 import { hasEnergyCounter, parseStatus } from "@/lib/tuya/decode";
-import { listStations } from "@/lib/deye/client";
+import { checkLogin, hashDeyePassword, listStations } from "@/lib/deye/client";
+import { profileDeyeAccount } from "@/lib/deye/accounts";
 
 /** Loads a tracked device and checks the user may manage its profile. */
 async function deviceForUser(user: { id: string; role?: string | null }, deviceId: string) {
@@ -216,23 +217,67 @@ async function meterInProfile(profileId: string, meterId: string) {
 const stationFields = {
   name: z.string().trim().min(1, "Name is required"),
   meterId: z.uuid("Pick a meter"),
-  gridDrawMetered: z.enum(["yes", "no"]).transform((v) => v === "yes"),
+  gridDrawMetered: z.enum(["yes", "no"], "Say whether a breaker measures the inverter's grid input").transform((v) => v === "yes"),
 };
 
 const addStationSchema = z.object({ profileId: z.uuid(), deyeStationId: z.string().min(1), ...stationFields });
 
-/** Links a Deye Cloud station to a profile. Super admin only: the Deye account is shared by the whole app. */
+const deyeLoginSchema = z.object({
+  profileId: z.uuid(),
+  email: z.email("Enter the email you use on Deye Cloud"),
+  password: z.string().min(1, "Enter the Deye Cloud password"),
+});
+
+/**
+ * Connects a profile to its own Deye Cloud account. Any member may do it, so each household enters
+ * its own login. The password is checked with Deye, then only its SHA-256 is stored.
+ */
+export async function connectDeye(_: ActionResult | null, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const parsed = deyeLoginSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0].message };
+  const { profileId, email, password } = parsed.data;
+  try {
+    await assertProfileAccess(user, profileId);
+    const account = { email, passwordHash: hashDeyePassword(password) };
+    await checkLogin(account);
+    await db.update(schema.profiles).set({ deyeEmail: email, deyePasswordHash: account.passwordHash }).where(eq(schema.profiles.id, profileId));
+  } catch (e) {
+    return { ok: false, message: errorMessage(e) };
+  }
+  revalidatePath("/devices");
+  return { ok: true, message: "Deye account connected" };
+}
+
+/** Forgets the profile's Deye login. Linked inverters stay, but stop updating until one is connected again. */
+export async function disconnectDeye(_: ActionResult | null, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const profileId = String(formData.get("profileId"));
+  try {
+    await assertProfileAccess(user, profileId);
+    await db.update(schema.profiles).set({ deyeEmail: null, deyePasswordHash: null }).where(eq(schema.profiles.id, profileId));
+  } catch (e) {
+    return { ok: false, message: errorMessage(e) };
+  }
+  revalidatePath("/devices");
+  return { ok: true, message: "Deye account disconnected" };
+}
+
+/** Links a station from the profile's own Deye account. */
 export async function addStation(_: ActionResult | null, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
-  if (!isSuperAdmin(user)) return { ok: false, message: "Only the super admin can link inverters" };
   const parsed = addStationSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0].message };
   const { profileId, deyeStationId, name, meterId, gridDrawMetered } = parsed.data;
 
   try {
+    await assertProfileAccess(user, profileId);
     if (!(await meterInProfile(profileId, meterId))) return { ok: false, message: "That meter is not in this profile" };
-    const station = (await listStations()).find((s) => s.id === deyeStationId);
-    if (!station) return { ok: false, message: "Station not found on the Deye account" };
+    const account = await profileDeyeAccount(profileId);
+    if (!account) return { ok: false, message: "Connect this profile's Deye account first" };
+    // Only stations on the profile's own Deye account can be linked.
+    const station = (await listStations(account)).find((s) => s.id === deyeStationId);
+    if (!station) return { ok: false, message: "Station not found on this profile's Deye account" };
     const inserted = await db
       .insert(schema.solarStations)
       .values({ profileId, deyeStationId, name, meterId, gridDrawMetered })
@@ -280,7 +325,7 @@ export async function setStationActive(_: ActionResult | null, formData: FormDat
 
 export async function deleteStation(_: ActionResult | null, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
-  if (!isSuperAdmin(user)) return { ok: false, message: "Only the super admin can remove inverters" };
+  if (!isSuperAdmin(user)) return { ok: false, message: "Only the super admin can remove inverters (it deletes their history)" };
   const stationId = String(formData.get("stationId"));
   try {
     await stationForUser(user, stationId);

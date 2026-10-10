@@ -146,14 +146,15 @@ export async function meterBill(meter: Meter, cycle: Cycle, endOverride?: string
   const end = endOverride ?? cycle.end;
 
   const meterDevices = await db.select().from(schema.devices).where(eq(schema.devices.meterId, meter.id));
+  const stations = await db.select().from(schema.solarStations).where(eq(schema.solarStations.meterId, meter.id));
   const grid = meterDevices.filter((d) => d.source === "grid");
-  const solar = meterDevices.filter((d) => d.source === "solar");
+  // A Deye inverter reports both sides itself, so solar breakers on the same meter are ignored.
+  const solar = stations.length ? [] : meterDevices.filter((d) => d.source === "solar");
   const inputIds = solar.map((d) => d.inverterInputDeviceId).filter((id): id is string => !!id);
 
   const usage = await deviceKwh([...grid.map((d) => d.id), ...solar.map((d) => d.id), ...inputIds], cycle.start, end);
   const sum = (ids: string[]) => ids.reduce((s, id) => s + (usage.get(id) ?? 0), 0);
 
-  const stations = await db.select().from(schema.solarStations).where(eq(schema.solarStations.meterId, meter.id));
   const deye = await stationKwh(stations.map((s) => s.id), cycle.start, end);
   const inverterGrid = stations
     .filter((s) => !s.gridDrawMetered)

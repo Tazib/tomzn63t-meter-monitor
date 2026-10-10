@@ -16,23 +16,31 @@ const SUCCESS = new Set(["0", "1000000"]);
 // Expired or invalid token: get a new one and retry once.
 const TOKEN_INVALID = new Set(["1001", "1002", "1003", "2101017", "2101019"]);
 
+/** A Deye Cloud user login. Each profile has its own; the developer app (env) is shared. */
+export type DeyeAccount = { email: string; passwordHash: string };
+
+/** Deye wants the SHA-256 hex of the password, so only that is ever stored. */
+export function hashDeyePassword(password: string) {
+  return createHash("sha256").update(password).digest("hex");
+}
+
 export function deyeConfigured() {
-  return !!(process.env.DEYE_APP_ID && process.env.DEYE_APP_SECRET && process.env.DEYE_EMAIL && process.env.DEYE_PASSWORD);
+  return !!(process.env.DEYE_APP_ID && process.env.DEYE_APP_SECRET);
 }
 
 function config() {
-  const { DEYE_APP_ID: appId, DEYE_APP_SECRET: appSecret, DEYE_EMAIL: email, DEYE_PASSWORD: password } = process.env;
-  if (!appId || !appSecret || !email || !password) {
-    throw new DeyeError("DEYE_APP_ID, DEYE_APP_SECRET, DEYE_EMAIL and DEYE_PASSWORD must be set");
-  }
+  const { DEYE_APP_ID: appId, DEYE_APP_SECRET: appSecret } = process.env;
+  if (!appId || !appSecret) throw new DeyeError("DEYE_APP_ID and DEYE_APP_SECRET must be set");
   // EU data center serves Europe, Asia and Africa; the US one serves the Americas.
   const baseUrl = (process.env.DEYE_BASE_URL || "https://eu1-developer.deyecloud.com/v1.0").replace(/\/$/, "");
-  return { baseUrl, appId, appSecret, email, password };
+  return { baseUrl, appId, appSecret };
 }
 
 type Body = Record<string, unknown> & { code?: unknown; msg?: string; success?: boolean; data?: unknown };
 
-let token: { value: string; expiresAt: number } | null = null;
+// One token per Deye login.
+const tokens = new Map<string, { value: string; expiresAt: number }>();
+const tokenKey = (a: DeyeAccount) => `${a.email.toLowerCase()}:${a.passwordHash}`;
 
 async function post(path: string, payload: unknown, accessToken?: string): Promise<Body> {
   const { baseUrl } = config();
@@ -51,29 +59,36 @@ async function post(path: string, payload: unknown, accessToken?: string): Promi
 
 const ok = (b: Body) => b.success === true || SUCCESS.has(String(b.code));
 
-async function getToken(): Promise<string> {
-  if (token && Date.now() < token.expiresAt) return token.value;
-  const { appId, appSecret, email, password } = config();
-  // Deye wants the SHA-256 hex of the password, never the password itself.
+async function getToken(account: DeyeAccount): Promise<string> {
+  const cached = tokens.get(tokenKey(account));
+  if (cached && Date.now() < cached.expiresAt) return cached.value;
+  const { appId, appSecret } = config();
   const body = await post(`/account/token?appId=${encodeURIComponent(appId)}`, {
     appSecret,
-    email,
-    password: createHash("sha256").update(password).digest("hex"),
+    email: account.email,
+    password: account.passwordHash,
   });
   if (!ok(body)) throw new DeyeError(`Deye login failed: ${body.msg ?? "unknown error"}`, String(body.code));
   const result = (body.data && typeof body.data === "object" ? body.data : body) as { accessToken?: string; expiresIn?: number | string };
   if (!result.accessToken) throw new DeyeError("Deye login returned no token");
   // Tokens last about 60 days; renew a day early.
   const ttl = Number(result.expiresIn) || 5_184_000;
-  token = { value: result.accessToken.replace(/^bearer\s+/i, ""), expiresAt: Date.now() + (ttl - 86_400) * 1000 };
+  const token = { value: result.accessToken.replace(/^bearer\s+/i, ""), expiresAt: Date.now() + (ttl - 86_400) * 1000 };
+  tokens.set(tokenKey(account), token);
   return token.value;
 }
 
-async function call<T>(path: string, payload: unknown): Promise<T> {
-  let body = await post(path, payload, await getToken());
+/** Throws a DeyeError when the login is wrong. */
+export async function checkLogin(account: DeyeAccount) {
+  tokens.delete(tokenKey(account));
+  await getToken(account);
+}
+
+async function call<T>(account: DeyeAccount, path: string, payload: unknown): Promise<T> {
+  let body = await post(path, payload, await getToken(account));
   if (!ok(body) && TOKEN_INVALID.has(String(body.code))) {
-    token = null;
-    body = await post(path, payload, await getToken());
+    tokens.delete(tokenKey(account));
+    body = await post(path, payload, await getToken(account));
   }
   if (!ok(body)) throw new DeyeError(`Deye ${path}: ${body.msg ?? "error"} (code ${body.code})`, String(body.code));
   return (body.data && typeof body.data === "object" ? body.data : body) as T;
@@ -82,10 +97,10 @@ async function call<T>(path: string, payload: unknown): Promise<T> {
 export type DeyeStation = { id: string; name: string; installedCapacity: number | null; lastUpdateTime: number | null };
 
 /** Every station (plant) on the Deye account. */
-export async function listStations(): Promise<DeyeStation[]> {
+export async function listStations(account: DeyeAccount): Promise<DeyeStation[]> {
   const out: DeyeStation[] = [];
   for (let page = 1; page <= 10; page++) {
-    const r = await call<{ total?: number; stationList?: Record<string, unknown>[] }>("/station/list", { page, size: 100 });
+    const r = await call<{ total?: number; stationList?: Record<string, unknown>[] }>(account, "/station/list", { page, size: 100 });
     const rows = r.stationList ?? [];
     for (const s of rows) {
       out.push({
@@ -101,16 +116,16 @@ export async function listStations(): Promise<DeyeStation[]> {
 }
 
 /** Latest power snapshot of a station (raw; see decode.ts). */
-export function stationLatest(stationId: string) {
-  return call<Record<string, unknown>>("/station/latest", { stationId: Number(stationId) });
+export function stationLatest(account: DeyeAccount, stationId: string) {
+  return call<Record<string, unknown>>(account, "/station/latest", { stationId: Number(stationId) });
 }
 
 /**
  * Daily energy totals (kWh) for `start` to `endExclusive` (YYYY-MM-DD). Deye rejects spans of 31 days
  * or more, so callers keep each request to 30.
  */
-export async function stationDaily(stationId: string, start: string, endExclusive: string) {
-  const r = await call<{ stationDataItems?: Record<string, unknown>[] }>("/station/history", {
+export async function stationDaily(account: DeyeAccount, stationId: string, start: string, endExclusive: string) {
+  const r = await call<{ stationDataItems?: Record<string, unknown>[] }>(account, "/station/history", {
     stationId: Number(stationId),
     granularity: 2,
     startAt: start,

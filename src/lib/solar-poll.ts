@@ -2,7 +2,7 @@
 // and a year of daily history once after a station is linked. Runs in the poller process.
 import { eq, lt, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { deyeConfigured, stationDaily, stationLatest } from "@/lib/deye/client";
+import { deyeConfigured, stationDaily, stationLatest, type DeyeAccount } from "@/lib/deye/client";
 import { parseDaily, parseLatest, type SolarDay } from "@/lib/deye/decode";
 import { addDays } from "@/lib/billing";
 import { dhakaDay } from "@/lib/energy";
@@ -17,17 +17,24 @@ const CHUNK_DAYS = 30; // Deye rejects history spans of 31 days or more
 export type SolarPollSummary = { stations: number; stored: number; notes: string[] };
 
 export async function pollSolar(now = new Date()): Promise<SolarPollSummary> {
-  const stations = await db.select().from(schema.solarStations).where(eq(schema.solarStations.active, true));
-  const summary: SolarPollSummary = { stations: stations.length, stored: 0, notes: [] };
-  if (stations.length === 0) return summary;
+  const rows = await db
+    .select({ station: schema.solarStations, email: schema.profiles.deyeEmail, passwordHash: schema.profiles.deyePasswordHash })
+    .from(schema.solarStations)
+    .innerJoin(schema.profiles, eq(schema.profiles.id, schema.solarStations.profileId))
+    .where(eq(schema.solarStations.active, true));
+  const summary: SolarPollSummary = { stations: rows.length, stored: 0, notes: [] };
+  if (rows.length === 0) return summary;
   if (!deyeConfigured()) {
-    summary.notes.push("Deye stations are linked but DEYE_* settings are missing in .env");
+    summary.notes.push("Deye stations are linked but DEYE_APP_ID / DEYE_APP_SECRET are missing in .env");
     return summary;
   }
 
-  for (const station of stations) {
+  for (const { station, email, passwordHash } of rows) {
     try {
-      const snap = parseLatest(await stationLatest(station.deyeStationId), now);
+      // Each profile reads its stations with its own Deye login.
+      if (!email || !passwordHash) throw new Error("This profile's Deye account is not connected");
+      const account: DeyeAccount = { email, passwordHash };
+      const snap = parseLatest(await stationLatest(account, station.deyeStationId), now);
       const inserted = await db
         .insert(schema.solarReadings)
         .values({ stationId: station.id, ...snap })
@@ -36,12 +43,12 @@ export async function pollSolar(now = new Date()): Promise<SolarPollSummary> {
       if (inserted.length) summary.stored++;
 
       if (!station.backfilledAt) {
-        const days = await backfill(station, now);
+        const days = await backfill(account, station, now);
         summary.notes.push(`${station.name}: backfilled ${days} days of history`);
       } else if (!station.dailySyncedAt || now.getTime() - station.dailySyncedAt.getTime() >= DAILY_EVERY_MS) {
         // Yesterday too, so its final total lands after midnight.
         const today = dhakaDay(now);
-        await storeDays(station.id, parseDaily(await stationDaily(station.deyeStationId, addDays(today, -1), addDays(today, 1))));
+        await storeDays(station.id, parseDaily(await stationDaily(account, station.deyeStationId, addDays(today, -1), addDays(today, 1))));
         await db.update(schema.solarStations).set({ dailySyncedAt: now }).where(eq(schema.solarStations.id, station.id));
       }
 
@@ -56,12 +63,12 @@ export async function pollSolar(now = new Date()): Promise<SolarPollSummary> {
 }
 
 /** Daily totals for the last year, oldest first, 30 days per request. Returns the days stored. */
-async function backfill(station: Station, now: Date): Promise<number> {
+async function backfill(account: DeyeAccount, station: Station, now: Date): Promise<number> {
   const today = dhakaDay(now);
   let stored = 0;
   for (let start = addDays(today, -BACKFILL_DAYS); start <= today; start = addDays(start, CHUNK_DAYS)) {
     const end = [addDays(start, CHUNK_DAYS), addDays(today, 1)].sort()[0];
-    const days = parseDaily(await stationDaily(station.deyeStationId, start, end)).filter((d) => d.day <= today);
+    const days = parseDaily(await stationDaily(account, station.deyeStationId, start, end)).filter((d) => d.day <= today);
     await storeDays(station.id, days);
     stored += days.filter((d) => d.generationKwh + d.consumptionKwh + d.purchaseKwh > 0).length;
   }

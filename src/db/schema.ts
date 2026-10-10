@@ -88,6 +88,10 @@ export const profiles = pgTable("profiles", {
   // UID of the Smart Life / Tuya app account linked to the cloud project.
   // Devices offered in "Add device" are limited to this account.
   tuyaUid: text("tuya_uid"),
+  // Deye Cloud login for this profile's inverters. Only the SHA-256 of the password is kept (what
+  // Deye's login takes), set by a profile member on the Devices page.
+  deyeEmail: text("deye_email"),
+  deyePasswordHash: text("deye_password_hash"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

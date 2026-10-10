@@ -104,8 +104,10 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
   return Promise.all(
     meters.map(async (meter) => {
       const own = devices.filter((d) => d.meterId === meter.id);
+      const ownStations = stations.filter((s) => s.meterId === meter.id);
       const isGrid = new Set(own.filter((d) => d.source === "grid").map((d) => d.id));
-      const isSolar = new Set(own.filter((d) => d.source === "solar").map((d) => d.id));
+      // With a Deye inverter on the meter, its figures replace any solar breaker (same as the bill).
+      const isSolar = new Set(ownStations.length ? [] : own.filter((d) => d.source === "solar").map((d) => d.id));
       const ownIds = new Set(own.map((d) => d.id));
 
       const withLive = own.map((d) => {
@@ -121,7 +123,6 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
       };
 
       // Deye inverters: solar = panel output; grid = what an unmetered inverter buys (no breaker sees it).
-      const ownStations = stations.filter((s) => s.meterId === meter.id);
       const isStation = new Set(ownStations.map((s) => s.id));
       const unmetered = new Set(ownStations.filter((s) => !s.gridDrawMetered).map((s) => s.id));
       const stationLive = (solar?.latest ?? []).filter((r) => isStation.has(r.stationId) && now.getTime() - r.ts.getTime() < SOLAR_LIVE_WINDOW_MS);

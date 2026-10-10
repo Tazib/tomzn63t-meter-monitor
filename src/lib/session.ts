@@ -26,17 +26,21 @@ export async function requireSuperAdmin() {
 }
 
 /** Profiles the user may see: all for a super admin, otherwise their memberships. */
+// Never the Deye password hash: these rows reach pages.
+const profileColumns = {
+  id: schema.profiles.id,
+  name: schema.profiles.name,
+  tuyaUid: schema.profiles.tuyaUid,
+  deyeEmail: schema.profiles.deyeEmail,
+  createdAt: schema.profiles.createdAt,
+};
+
 export async function accessibleProfiles(user: { id: string; role?: string | null }) {
   if (isSuperAdmin(user)) {
-    return db.select().from(schema.profiles).orderBy(schema.profiles.name);
+    return db.select(profileColumns).from(schema.profiles).orderBy(schema.profiles.name);
   }
   return db
-    .select({
-      id: schema.profiles.id,
-      name: schema.profiles.name,
-      tuyaUid: schema.profiles.tuyaUid,
-      createdAt: schema.profiles.createdAt,
-    })
+    .select(profileColumns)
     .from(schema.profiles)
     .innerJoin(schema.profileMembers, eq(schema.profileMembers.profileId, schema.profiles.id))
     .where(eq(schema.profileMembers.userId, user.id))
