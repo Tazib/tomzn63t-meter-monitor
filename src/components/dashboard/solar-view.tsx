@@ -48,7 +48,12 @@ function Hero({ view }: { view: View }) {
       <div className="grid min-w-0 content-between gap-6 p-6 sm:p-8">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-muted-foreground">Solar now</h2>
-          {live ? (
+          {live?.stale ? (
+            <span className="flex items-center gap-1.5 text-xs font-medium text-warning">
+              <TriangleAlert className="size-3.5" />
+              Last report {formatDistanceToNowStrict(live.ts, { addSuffix: true })}
+            </span>
+          ) : live ? (
             <span className="flex items-center gap-2 text-xs font-medium text-solar">
               <span className="live-dot" />
               Live
@@ -65,11 +70,17 @@ function Hero({ view }: { view: View }) {
             <AnimatedNumber
               value={live.generationW}
               format="power"
-              className="block text-[3.25rem] leading-none font-semibold tracking-[-0.04em] sm:text-[4rem]"
+              className={cn("block text-[3.25rem] leading-none font-semibold tracking-[-0.04em] sm:text-[4rem]", live.stale && "text-muted-foreground")}
               unitClassName="ml-1.5 text-[0.4em] font-medium tracking-normal text-muted-foreground"
             />
           )}
-          <p className="mt-2 text-sm text-muted-foreground">{live ? "From the panels" : "Waiting for the inverter to report to Deye Cloud"}</p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {!live
+              ? "Waiting for the inverter to report to Deye Cloud"
+              : live.stale
+                ? "From the panels at the last report. The inverter hasn't sent new data to Deye Cloud since; check its Wi-Fi logger."
+                : "From the panels"}
+          </p>
         </div>
         {live && (
           <ul className="grid gap-2 border-t border-border pt-4 text-sm">

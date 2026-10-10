@@ -329,8 +329,8 @@ function inverterSplit(consumption: number, purchase: number): InverterSplit {
 
 export type SolarView = {
   stations: { id: string; name: string; meterLabel: string; lastSeenAt: Date | null; lastError: string | null; active: boolean }[];
-  /** Summed over stations with a recent snapshot; null when none is recent. */
-  live: { ts: number; generationW: number | null; consumptionW: number | null; gridW: number | null; batteryW: number | null; batterySoc: number | null } | null;
+  /** Summed over each station's latest snapshot (last 24 h); `stale` when none is recent. */
+  live: { stale: boolean; ts: number; generationW: number | null; consumptionW: number | null; gridW: number | null; batteryW: number | null; batterySoc: number | null } | null;
   today: SolarTotals & { charge: number; discharge: number; split: InverterSplit };
   cycle: (SolarTotals & {
     split: InverterSplit;
@@ -356,7 +356,9 @@ export async function solarDashboard(meters: MeterDashboard[], now = new Date())
   const ids = stations.map((s) => s.id);
   const series = await solarSeries(ids, now);
 
-  const recent = series.latest.filter((r) => now.getTime() - r.ts.getTime() < SOLAR_LIVE_WINDOW_MS);
+  const fresh = series.latest.filter((r) => now.getTime() - r.ts.getTime() < SOLAR_LIVE_WINDOW_MS);
+  // When the logger stops reporting, keep showing the last snapshot, marked as old.
+  const recent = fresh.length ? fresh : series.latest;
   const sum = (key: "generationW" | "consumptionW" | "gridW" | "batteryW") => sumNullable(recent.map((r) => r[key]));
   const socs = recent.map((r) => r.batterySoc).filter((v): v is number => v !== null);
 
@@ -422,6 +424,7 @@ export async function solarDashboard(meters: MeterDashboard[], now = new Date())
     }),
     live: recent.length
       ? {
+          stale: fresh.length === 0,
           ts: Math.max(...recent.map((r) => r.ts.getTime())),
           generationW: sum("generationW"),
           consumptionW: sum("consumptionW"),
