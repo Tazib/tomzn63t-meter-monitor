@@ -558,10 +558,11 @@ function StationFields({
           <option value="yes">A breaker in this app measures it</option>
           <option value="no">No breaker: use Deye&apos;s figure</option>
         </NativeSelect>
-        <p className="text-xs text-muted-foreground">
-          Pick the first if a 63T sits between the meter and the inverter&apos;s grid input, so it isn&apos;t counted twice.
-        </p>
       </div>
+      <p className="-mt-2 text-xs text-muted-foreground sm:col-span-2 lg:col-span-3">
+        Grid power into the inverter: pick &ldquo;A breaker in this app measures it&rdquo; if a 63T sits between the meter and the
+        inverter&apos;s grid input, so it isn&apos;t counted twice.
+      </p>
     </>
   );
 }
