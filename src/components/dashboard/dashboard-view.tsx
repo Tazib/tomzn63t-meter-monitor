@@ -25,7 +25,13 @@ export function DashboardView({ view }: { view: View }) {
         </Panel>
       )}
       <Panel title="Usage" i={3}>
-        <EnergyCharts power={view.power} daily={view.daily} monthly={view.monthly} hasSolar={view.hasSolar} />
+        <EnergyCharts
+          power={view.power}
+          daily={view.daily}
+          monthly={view.monthly}
+          hasSolar={view.hasSolar}
+          powerSolarLabel="Solar & battery"
+        />
       </Panel>
       {view.costs.total > 0 && (
         <Panel title="Where the money goes" note={`${tk(view.costs.total)} this cycle so far`} i={4}>
@@ -70,6 +76,8 @@ export function Panel({
 
 function Hero({ view }: { view: View }) {
   const total = (view.liveGridW ?? 0) + (view.liveSolarW ?? 0);
+  // With solar, the whole home: grid plus what the inverter supplies from panels and battery.
+  const usingNow = view.liveGridW === null && view.liveSolarW === null ? null : view.hasSolar ? total : view.liveGridW;
   const gridShare = total > 0 ? (view.liveGridW ?? 0) / total : 1;
   const progress = view.cycleProgress;
 
@@ -84,18 +92,22 @@ function Hero({ view }: { view: View }) {
           <LiveBadge at={view.lastReadingAt} />
         </div>
         <div>
-          {view.liveGridW === null ? (
+          {usingNow === null ? (
             <div className="text-[3.25rem] leading-none font-semibold tracking-[-0.04em] text-muted-foreground/50 sm:text-[4rem]">—</div>
           ) : (
             <AnimatedNumber
-              value={view.liveGridW}
+              value={usingNow}
               format="power"
               className="block text-[3.25rem] leading-none font-semibold tracking-[-0.04em] sm:text-[4rem]"
               unitClassName="ml-1.5 text-[0.4em] font-medium tracking-normal text-muted-foreground"
             />
           )}
           <p className="mt-2 text-sm text-muted-foreground">
-            {view.liveGridW === null ? "Waiting for a live reading from the breakers" : "From the grid"}
+            {usingNow === null
+              ? "Waiting for a live reading from the breakers"
+              : view.hasSolar
+                ? "From the grid, solar and battery together"
+                : "From the grid"}
           </p>
         </div>
         {view.hasSolar ? (
@@ -108,7 +120,7 @@ function Hero({ view }: { view: View }) {
             )}
             <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm">
               <Legend color="bg-grid" label="Grid" value={view.liveGridW} />
-              <Legend color="bg-solar" label="Solar" value={view.liveSolarW} />
+              <Legend color="bg-solar" label="Solar & battery" value={view.liveSolarW} />
             </div>
           </div>
         ) : (

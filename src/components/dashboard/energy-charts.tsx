@@ -17,11 +17,14 @@ export function EnergyCharts({
   daily,
   monthly,
   hasSolar,
+  powerSolarLabel,
 }: {
   power: PowerPoint[];
   daily: Day[];
   monthly: Month[];
   hasSolar: boolean;
+  /** Name of the solar line on today's power chart. */
+  powerSolarLabel?: string;
 }) {
   return (
     <SegmentedTabs
@@ -34,7 +37,7 @@ export function EnergyCharts({
       ]}
       panels={[
         power.length ? (
-          <PowerLineChart key="p" points={power} showSolar={hasSolar} />
+          <PowerLineChart key="p" points={power} showSolar={hasSolar} solarLabel={powerSolarLabel} />
         ) : (
           <Empty key="p">No readings yet today. They appear here a minute after the poller runs.</Empty>
         ),

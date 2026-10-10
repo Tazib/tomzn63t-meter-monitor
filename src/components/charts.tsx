@@ -100,7 +100,17 @@ export type PowerPoint = { ts: number; grid: number | null; solar: number | null
 const timeFmt = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Dhaka" });
 
 /** Today's power curve (W) with a soft fill and a crosshair tooltip. */
-export function PowerLineChart({ points, showSolar, height = 280 }: { points: PowerPoint[]; showSolar: boolean; height?: number }) {
+export function PowerLineChart({
+  points,
+  showSolar,
+  solarLabel = "Solar",
+  height = 280,
+}: {
+  points: PowerPoint[];
+  showSolar: boolean;
+  solarLabel?: string;
+  height?: number;
+}) {
   const c = usePalette();
   const line = (name: string, color: string, key: "grid" | "solar") => ({
     name,
@@ -143,7 +153,7 @@ export function PowerLineChart({ points, showSolar, height = 280 }: { points: Po
       splitLine: { show: false },
     },
     yAxis: valueAxis(c, "W"),
-    series: [line("Grid", c.grid, "grid"), ...(showSolar ? [line("Solar", c.solar, "solar")] : [])],
+    series: [line("Grid", c.grid, "grid"), ...(showSolar ? [line(solarLabel, c.solar, "solar")] : [])],
   };
   return <ReactECharts option={option} style={{ height }} notMerge />;
 }

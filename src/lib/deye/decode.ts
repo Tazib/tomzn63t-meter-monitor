@@ -83,3 +83,13 @@ export function parseDaily(items: Record<string, unknown>[]): SolarDay[] {
   }
   return out;
 }
+
+/**
+ * What a Deye inverter is supplying from its own sources right now: panels plus battery discharge
+ * (battery charging subtracts), never below 0 or above what its loads use. Grid power isn't in it.
+ */
+export function inverterOwnSupply(r: { generationW: number | null; batteryW: number | null; consumptionW: number | null }) {
+  if (r.generationW === null && r.batteryW === null) return null;
+  const supply = Math.max((r.generationW ?? 0) + (r.batteryW ?? 0), 0);
+  return r.consumptionW === null ? supply : Math.min(supply, Math.max(r.consumptionW, 0));
+}

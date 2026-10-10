@@ -13,6 +13,7 @@ import {
   type Projection,
 } from "@/lib/billing-data";
 import { dhakaDay } from "@/lib/energy";
+import { inverterOwnSupply } from "@/lib/deye/decode";
 
 type Device = typeof schema.devices.$inferSelect;
 type Meter = typeof schema.meters.$inferSelect;
@@ -126,6 +127,13 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
       const isStation = new Set(ownStations.map((s) => s.id));
       const unmetered = new Set(ownStations.filter((s) => !s.gridDrawMetered).map((s) => s.id));
       const stationLive = (solar?.latest ?? []).filter((r) => isStation.has(r.stationId) && now.getTime() - r.ts.getTime() < SOLAR_LIVE_WINDOW_MS);
+      // Solar breakers: output minus what the inverter drew from the grid = what solar/battery supplied.
+      const breakerOwnSupply = () => {
+        const out = livePower(isSolar);
+        if (out === null) return null;
+        const inputs = new Set(own.filter((d) => isSolar.has(d.id) && d.inverterInputDeviceId).map((d) => d.inverterInputDeviceId!));
+        return Math.max(out - (livePower(inputs) ?? 0), 0);
+      };
       const deyeDay = (day: string, set: Set<string>, key: "generation" | "purchase") =>
         (solar?.daily ?? []).filter((x) => x.day === day && set.has(x.stationId)).reduce((s, x) => s + x[key], 0);
       const deyeMonth = (month: string, set: Set<string>, key: "generation" | "purchase") =>
@@ -165,7 +173,8 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
       for (const r of solar?.power ?? []) {
         if (!isStation.has(r.stationId)) continue;
         const b = buckets.get(r.ts) ?? { grid: null, solar: null };
-        if (r.generationW !== null) b.solar = (b.solar ?? 0) + r.generationW;
+        const supply = inverterOwnSupply(r);
+        if (supply !== null) b.solar = (b.solar ?? 0) + supply;
         if (unmetered.has(r.stationId) && r.gridW !== null) b.grid = (b.grid ?? 0) + Math.max(r.gridW, 0);
         buckets.set(r.ts, b);
       }
@@ -195,7 +204,7 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
           livePower(isGrid),
           sumNullable(stationLive.filter((r) => unmetered.has(r.stationId)).map((r) => (r.gridW === null ? null : Math.max(r.gridW, 0)))),
         ]),
-        liveSolarW: sumNullable([livePower(isSolar), sumNullable(stationLive.map((r) => r.generationW))]),
+        liveSolarW: sumNullable([breakerOwnSupply(), sumNullable(stationLive.map(inverterOwnSupply))]),
         lastSolarAt: stationLive.reduce<number | null>((t, r) => Math.max(t ?? 0, r.ts.getTime()), null),
         hasSolar: isSolar.size > 0 || isStation.size > 0,
         todayGridKwh: round(withLive.filter((d) => isGrid.has(d.id)).reduce((s, d) => s + d.todayKwh, 0) + deyeDay(today, unmetered, "purchase")),
@@ -216,6 +225,7 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
 function round(n: number) {
   return Math.round(n * 100) / 100;
 }
+
 
 // ---------------------------------------------------------------- Deye inverters
 

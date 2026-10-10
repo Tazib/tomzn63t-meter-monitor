@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseDaily, parseDeyeTime, parseLatest } from "@/lib/deye/decode";
+import { inverterOwnSupply, parseDaily, parseDeyeTime, parseLatest } from "@/lib/deye/decode";
 
 const now = new Date("2026-10-10T06:00:00Z");
 
@@ -69,5 +69,27 @@ describe("parseDaily", () => {
       { day: "2026-09-03", generationKwh: 18.4, consumptionKwh: 21.2, purchaseKwh: 6.1, exportKwh: 0.3, chargeKwh: 5, dischargeKwh: 4.6 },
       { day: "2026-09-04", generationKwh: 0, consumptionKwh: 0, purchaseKwh: 0, exportKwh: 0, chargeKwh: 0, dischargeKwh: 0 },
     ]);
+  });
+});
+
+describe("inverterOwnSupply", () => {
+  it("counts the battery at night", () => {
+    expect(inverterOwnSupply({ generationW: 0, batteryW: 640, consumptionW: 650 })).toBe(640);
+  });
+
+  it("counts only the solar that reaches the loads while the battery charges", () => {
+    expect(inverterOwnSupply({ generationW: 3000, batteryW: -1800, consumptionW: 1500 })).toBe(1200);
+  });
+
+  it("is zero while the battery charges from the grid", () => {
+    expect(inverterOwnSupply({ generationW: 0, batteryW: -1500, consumptionW: 400 })).toBe(0);
+  });
+
+  it("never exceeds what the loads use", () => {
+    expect(inverterOwnSupply({ generationW: 4000, batteryW: 0, consumptionW: 900 })).toBe(900);
+  });
+
+  it("is unknown without panel or battery data", () => {
+    expect(inverterOwnSupply({ generationW: null, batteryW: null, consumptionW: 900 })).toBeNull();
   });
 });
