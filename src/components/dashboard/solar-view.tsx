@@ -38,7 +38,7 @@ function selfPowered(split: InverterSplit) {
 function Hero({ view }: { view: View }) {
   const live = view.live;
   const cycle = view.cycle;
-  const share = cycle ? selfPowered(cycle.split) : null;
+  const share = cycle ? selfPowered(cycle.house) : null;
 
   return (
     <section
@@ -137,8 +137,9 @@ function Hero({ view }: { view: View }) {
               <div className="fill-bar rounded-full bg-grid" style={{ flexGrow: 1 - share, flexBasis: 0 }} />
             </div>
             <p className="text-xs text-muted-foreground">
-              {Math.round(share * 100)}% of the inverter's energy came from solar{view.hasBattery ? " and battery" : ""}, {Math.round((1 - share) * 100)}% from
-              the grid
+              Whole house this cycle: {Math.round(share * 100)}% from solar{view.hasBattery ? " & battery" : ""} (
+              {kwh(Math.round(cycle!.house.ownKwh))}), {Math.round((1 - share) * 100)}% from the grid ({kwh(Math.round(cycle!.house.gridKwh))}, all
+              meters)
             </p>
           </div>
         )}

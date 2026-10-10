@@ -332,7 +332,11 @@ export type SolarView = {
   /** Summed over stations with a recent snapshot; null when none is recent. */
   live: { ts: number; generationW: number | null; consumptionW: number | null; gridW: number | null; batteryW: number | null; batterySoc: number | null } | null;
   today: SolarTotals & { charge: number; discharge: number; split: InverterSplit };
-  cycle: (SolarTotals & { split: InverterSplit; saving: number; billWithSolar: number; billWithoutSolar: number; start: string; end: string; daysElapsed: number; daysInCycle: number }) | null;
+  cycle: (SolarTotals & {
+    split: InverterSplit;
+    /** Whole house: every meter's grid use (inverter's grid draw included) vs solar and battery. */
+    house: InverterSplit;
+    saving: number; billWithSolar: number; billWithoutSolar: number; start: string; end: string; daysElapsed: number; daysInCycle: number }) | null;
   /** Grid = bought from the grid, solar = panel output. */
   power: PowerPoint[];
   daily: DayPoint[];
@@ -361,6 +365,8 @@ export async function solarDashboard(meters: MeterDashboard[], now = new Date())
 
   // The cycle comes from each reference meter; savings are already worked out in its bill.
   const withStations = meters.filter((m) => stations.some((s) => s.meterId === m.meter.id) && m.cycle);
+  // Every meter in the homes that have an inverter, for the whole-house split.
+  const houseMeters = meters.filter((m) => stations.some((s) => s.profileId === m.meter.profileId));
   let cycle: SolarView["cycle"] = null;
   if (withStations.length) {
     const totals = await Promise.all(
@@ -372,8 +378,10 @@ export async function solarDashboard(meters: MeterDashboard[], now = new Date())
     const first = withStations[0].cycle!;
     const consumption = add("consumption");
     const purchase = add("purchase");
+    const split = inverterSplit(consumption, purchase);
     cycle = {
-      split: inverterSplit(consumption, purchase),
+      split,
+      house: { gridKwh: round(houseMeters.reduce((s, m) => s + (m.cycle?.kwh ?? 0), 0)), ownKwh: split.ownKwh },
       generation: add("generation"),
       consumption: add("consumption"),
       purchase: add("purchase"),
