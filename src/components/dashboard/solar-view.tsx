@@ -1,6 +1,6 @@
 import { formatDistanceToNowStrict } from "date-fns";
 import { BatteryMedium, Home, PlugZap, Sun, TriangleAlert } from "lucide-react";
-import type { SolarView as View } from "@/lib/dashboard-data";
+import type { HomeSplit, SolarView as View } from "@/lib/dashboard-data";
 import { kwh, period, tk, watts } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber } from "@/components/animated-number";
@@ -30,15 +30,15 @@ export function SolarView({ view }: { view: View }) {
 
 const pct = (part: number, whole: number) => (whole > 0 ? Math.min(Math.max(part / whole, 0), 1) : null);
 
-/** Share of home use not bought from the grid (solar, or battery charged by it). */
-function selfPowered(consumption: number, purchase: number) {
-  return pct(consumption - purchase, consumption);
+/** Share of the whole home's use that came from solar and battery rather than the grid. */
+function selfPowered(home: HomeSplit) {
+  return pct(home.ownKwh, home.gridKwh + home.ownKwh);
 }
 
 function Hero({ view }: { view: View }) {
   const live = view.live;
   const cycle = view.cycle;
-  const share = cycle ? selfPowered(cycle.consumption, cycle.purchase) : null;
+  const share = cycle ? selfPowered(cycle.home) : null;
 
   return (
     <section
@@ -138,7 +138,7 @@ function Hero({ view }: { view: View }) {
             </div>
             <p className="text-xs text-muted-foreground">
               {Math.round(share * 100)}% of home use came from solar{view.hasBattery ? " and battery" : ""}, {Math.round((1 - share) * 100)}% from
-              the grid
+              the grid (all meters)
             </p>
           </div>
         )}
@@ -161,11 +161,11 @@ function Flow({ icon: Icon, label, value }: { icon: React.ComponentType<{ classN
 
 function StatStrip({ view }: { view: View }) {
   const t = view.today;
-  const share = selfPowered(t.consumption, t.purchase);
+  const share = selfPowered(t.home);
   const cells = [
     { label: "Solar today", value: t.generation, solar: true, hint: t.export > 0 ? `${kwh(t.export)} sent to grid` : undefined },
-    { label: "Home used today", value: t.consumption },
-    { label: "Bought from grid today", value: t.purchase },
+    { label: "Home used today", value: t.home.gridKwh + t.home.ownKwh, hint: "All meters + solar & battery" },
+    { label: "From the grid today", value: t.home.gridKwh, hint: "All meters" },
   ];
 
   return (
@@ -189,7 +189,7 @@ function StatStrip({ view }: { view: View }) {
       <div className="grid gap-1.5 border-t border-l border-border p-5 sm:p-6 lg:border-t-0">
         <div className="text-xs font-medium text-muted-foreground">Self-powered today</div>
         <div className="text-2xl font-semibold tracking-[-0.025em] tabular-nums">{share === null ? "—" : `${Math.round(share * 100)}%`}</div>
-        <div className="text-xs text-muted-foreground">Home use not bought from the grid</div>
+        <div className="text-xs text-muted-foreground">Home use from solar and battery</div>
       </div>
     </section>
   );
@@ -197,9 +197,10 @@ function StatStrip({ view }: { view: View }) {
 
 function CycleBreakdown({ cycle }: { cycle: NonNullable<View["cycle"]> }) {
   const rows = [
-    { label: "Solar produced", value: cycle.generation, color: "bg-solar" },
-    { label: "Home used", value: cycle.consumption, color: "bg-foreground/50" },
-    { label: "Bought from grid", value: cycle.purchase, color: "bg-grid" },
+    { label: "Home used (all meters + inverter)", value: cycle.home.gridKwh + cycle.home.ownKwh, color: "bg-foreground/50" },
+    { label: "From the grid", value: cycle.home.gridKwh, color: "bg-grid" },
+    { label: "From solar and battery", value: cycle.home.ownKwh, color: "bg-solar" },
+    { label: "Solar produced", value: cycle.generation, color: "bg-solar/60" },
     ...(cycle.export > 0 ? [{ label: "Sent to grid", value: cycle.export, color: "bg-foreground/25" }] : []),
   ];
   const max = Math.max(...rows.map((r) => r.value), 1);

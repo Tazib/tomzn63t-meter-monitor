@@ -320,12 +320,15 @@ async function solarSeries(stationIds: string[], now: Date) {
 
 export type SolarTotals = { generation: number; consumption: number; purchase: number; export: number };
 
+/** The whole home: every meter's grid use plus what the inverters supplied from panels and battery. */
+export type HomeSplit = { gridKwh: number; ownKwh: number };
+
 export type SolarView = {
   stations: { id: string; name: string; meterLabel: string; lastSeenAt: Date | null; lastError: string | null; active: boolean }[];
   /** Summed over stations with a recent snapshot; null when none is recent. */
   live: { ts: number; generationW: number | null; consumptionW: number | null; gridW: number | null; batteryW: number | null; batterySoc: number | null } | null;
-  today: SolarTotals & { charge: number; discharge: number };
-  cycle: (SolarTotals & { saving: number; billWithSolar: number; billWithoutSolar: number; start: string; end: string; daysElapsed: number; daysInCycle: number }) | null;
+  today: SolarTotals & { charge: number; discharge: number; home: HomeSplit };
+  cycle: (SolarTotals & { home: HomeSplit; saving: number; billWithSolar: number; billWithoutSolar: number; start: string; end: string; daysElapsed: number; daysInCycle: number }) | null;
   /** Grid = bought from the grid, solar = panel output. */
   power: PowerPoint[];
   daily: DayPoint[];
@@ -354,6 +357,8 @@ export async function solarDashboard(meters: MeterDashboard[], now = new Date())
 
   // The cycle comes from each reference meter; savings are already worked out in its bill.
   const withStations = meters.filter((m) => stations.some((s) => s.meterId === m.meter.id) && m.cycle);
+  // Every meter in the homes that have an inverter, for whole-home shares.
+  const homeMeters = meters.filter((m) => stations.some((s) => s.profileId === m.meter.profileId));
   let cycle: SolarView["cycle"] = null;
   if (withStations.length) {
     const totals = await Promise.all(
@@ -363,7 +368,14 @@ export async function solarDashboard(meters: MeterDashboard[], now = new Date())
     );
     const add = (key: keyof SolarTotals) => round(totals.reduce((s, t) => s + [...t.values()].reduce((a, v) => a + v[key], 0), 0));
     const first = withStations[0].cycle!;
+    const consumption = add("consumption");
+    const purchase = add("purchase");
     cycle = {
+      // Grid: every meter in these homes (the inverter's own grid draw is already in its meter).
+      home: {
+        gridKwh: round(homeMeters.reduce((s, m) => s + (m.cycle?.kwh ?? 0), 0)),
+        ownKwh: round(Math.max(consumption - purchase, 0)),
+      },
       generation: add("generation"),
       consumption: add("consumption"),
       purchase: add("purchase"),
@@ -413,6 +425,10 @@ export async function solarDashboard(meters: MeterDashboard[], now = new Date())
         }
       : null,
     today: {
+      home: {
+        gridKwh: round(homeMeters.reduce((s, m) => s + m.todayGridKwh, 0)),
+        ownKwh: round(Math.max(total(dayTotals, "consumption") - total(dayTotals, "purchase"), 0)),
+      },
       generation: total(dayTotals, "generation"),
       consumption: total(dayTotals, "consumption"),
       purchase: total(dayTotals, "purchase"),
